@@ -5,7 +5,13 @@ const connections: Deno.Conn[] = [];
 for await (const connection of listener) {
   console.log('SoH Client Connected');
   connections.push(connection);
-  handleConnection(connection);
+  handleConnection(connection)
+    .catch((err) => {
+      console.error(err);
+      connection.close();
+      const index = connections.indexOf(connection);
+      connections.splice(index, 1);
+    });
 }
 
 async function handleConnection(connection: Deno.Conn) {
