@@ -1,56 +1,224 @@
-const listener = Deno.listen({ port: 43384 });
+import { writeAll } from "https://deno.land/std@0.192.0/streams/write_all.ts";
 
-const connections: Deno.Conn[] = [];
+const decoder = new TextDecoder();
+const encoder = new TextEncoder();
 
-for await (const connection of listener) {
-  console.log('SoH Client Connected');
-  connections.push(connection);
-  handleConnection(connection)
-    .catch((err) => {
-      console.error(err);
-      connection.close();
-      const index = connections.indexOf(connection);
-      connections.splice(index, 1);
-    });
+interface Packet {
+  clientId?: number;
+  roomId: string;
+  type: string;
 }
 
-async function handleConnection(connection: Deno.Conn) {
-  let buffer = new Uint8Array(1024);
-  let data = new Uint8Array(0);
+class Server {
+  private listener?: Deno.Listener;
+  public clients: Client[] = [];
+  public rooms: Room[] = [];
 
-  while (true) {
-    const count = await connection.read(buffer);
-    if (!count) {
-      // connection closed
-      const index = connections.indexOf(connection);
-      connections.splice(index, 1);
-      console.log('Lost connection to SoH Client');
-      break;
-    }
-
-    // Concatenate received data with the existing data
-    const receivedData = buffer.subarray(0, count);
-    data = concatUint8Arrays(data, receivedData);
-
-    while (true) {
-      const delimiterIndex = findDelimiterIndex(data);
-      if (delimiterIndex === -1) {
-        break; // Incomplete packet, wait for more data
-      }
-
-      // Extract the packet
-      const packet = data.subarray(0, delimiterIndex + 1);
-      data = data.subarray(delimiterIndex + 1);
-
-      console.log('Received packet:', new TextDecoder().decode(packet));
-
-      // Forward the packet to other clients
-      for (const currentConnection of connections) {
-        if (currentConnection !== connection) {
-          await currentConnection.write(packet);
+  async start() {
+    this.listener = Deno.listen({ port: 43384 });
+    this.log("Server Started");
+    try {
+      for await (const connection of this.listener) {
+        try {
+          const client = new Client(connection, this);
+          this.clients.push(client);
+        } catch (error) {
+          this.log(`Error connecting client: ${error.message}`);
         }
       }
+    } catch (error) {
+      this.log(`Error starting server: ${error.message}`);
     }
+  }
+
+  removeClient(client: Client) {
+    const index = this.clients.indexOf(client);
+    this.clients.splice(index, 1);
+  }
+
+  getOrCreateRoom(id: string) {
+    const room = this.rooms.find((room) => room.id === id);
+    if (room) {
+      return room;
+    }
+
+    const newRoom = new Room(id);
+    this.rooms.push(newRoom);
+    return newRoom;
+  }
+
+  removeRoom(room: Room) {
+    const index = this.rooms.indexOf(room);
+    this.rooms.splice(index, 1);
+  }
+
+  log(message: string) {
+    console.log(`[Server]: ${message}`);
+  }
+}
+
+class Client {
+  public id: number;
+  private connection: Deno.Conn;
+  public server: Server;
+  public room?: Room;
+  public lastPacketReceivedAt: number = Date.now();
+
+  constructor(connection: Deno.Conn, server: Server) {
+    this.connection = connection;
+    this.server = server;
+    this.id = connection.rid;
+
+    this.log("Connected");
+    this.waitForData();
+  }
+
+  async waitForData() {
+    const buffer = new Uint8Array(1024);
+    let data = new Uint8Array(0);
+
+    while (true) {
+      let count: null | number = 0;
+
+      try {
+        count = await this.connection.read(buffer);
+      } catch (error) {
+        this.log(`Error reading from connection: ${error.message}`);
+        this.disconnect();
+        break;
+      }
+
+      if (!count) {
+        this.disconnect();
+        break;
+      }
+
+      // Concatenate received data with the existing data
+      const receivedData = buffer.subarray(0, count);
+      data = concatUint8Arrays(data, receivedData);
+
+      // Handle all complete packets (while loop in case multiple packets were received at once)
+      while (true) {
+        const delimiterIndex = findDelimiterIndex(data);
+        if (delimiterIndex === -1) {
+          break; // Incomplete packet, wait for more data
+        }
+
+        // Extract the packet
+        const packet = data.subarray(0, delimiterIndex + 1);
+        data = data.subarray(delimiterIndex + 1);
+
+        this.handlePacket(packet);
+      }
+    }
+  }
+
+  handlePacket(packet: Uint8Array) {
+    try {
+      this.lastPacketReceivedAt = Date.now();
+      const packetString = decoder.decode(packet);
+      const packetObject: Packet = JSON.parse(packetString);
+      this.log(`Received ${packetObject.type} packet`);
+
+      if (packetObject.roomId && !this.room) {
+        this.server.getOrCreateRoom(packetObject.roomId).addClient(this);
+      }
+
+      // Send packets to other clients in the room
+      if (this.room) {
+        this.room.broadcastPacket(packetObject, this);
+      }
+    } catch (error) {
+      this.log(`Error handling packet: ${error.message}`);
+    }
+  }
+
+  async sendPacket(packetObject: Packet) {
+    try {
+      this.log(`Sending ${packetObject.type} packet`);
+      const packetString = JSON.stringify(packetObject);
+      const packet = encoder.encode(packetString + "\n");
+
+      await writeAll(this.connection, packet);
+    } catch (error) {
+      this.log(`Error sending packet: ${error.message}`);
+      this.disconnect();
+    }
+  }
+
+  disconnect() {
+    try {
+      this.server.removeClient(this);
+      if (this.room) {
+        this.room.removeClient(this);
+      }
+      this.connection.close();
+    } catch (error) {
+      this.log(`Error disconnecting: ${error.message}`);
+    } finally {
+      this.log("Disconnected");
+    }
+  }
+
+  log(message: string) {
+    console.log(`[Client ${this.id}]: ${message}`);
+  }
+}
+
+class Room {
+  public id: string;
+  public clients: Client[] = [];
+
+  constructor(id: string) {
+    this.id = id;
+    this.log("Created");
+  }
+
+  addClient(client: Client) {
+    this.log(`Adding client ${client.id}`);
+    this.clients.push(client);
+    client.room = this;
+
+    this.broadcastRoomClientCount();
+  }
+
+  removeClient(client: Client) {
+    this.log(`Removing client ${client.id}`);
+    const index = this.clients.indexOf(client);
+    this.clients.splice(index, 1);
+    client.room = undefined;
+
+    this.broadcastRoomClientCount();
+  }
+
+  broadcastRoomClientCount() {
+    this.log("Broadcasting RoomClientCount to all");
+    for (const client of this.clients) {
+      const packetObject = {
+        roomId: this.id,
+        type: "RoomClientIds",
+        clientIds: this.clients.map((c) => c.id).filter((id) =>
+          id !== client.id
+        ),
+      };
+
+      client.sendPacket(packetObject);
+    }
+  }
+
+  broadcastPacket(packetObject: Packet, sender: Client) {
+    this.log(`Broadcasting ${packetObject.type} packet from ${sender.id}`);
+    packetObject.clientId = sender.id;
+
+    for (const client of this.clients) {
+      if (client !== sender) {
+        client.sendPacket(packetObject);
+      }
+    }
+  }
+
+  log(message: string) {
+    console.log(`[Room ${this.id}]: ${message}`);
   }
 }
 
@@ -69,3 +237,6 @@ function findDelimiterIndex(data: Uint8Array): number {
   }
   return -1;
 }
+
+const server = new Server();
+server.start();
