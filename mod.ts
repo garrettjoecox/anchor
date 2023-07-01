@@ -126,7 +126,20 @@ class Client {
 
       // Send packets to other clients in the room
       if (this.room) {
-        this.room.broadcastPacket(packetObject, this);
+        if (packetObject.type === "RequestSaveState") {
+          if (this.room.clients.length > 1) {
+            this.room.requestingStateClients.push(this);
+            this.room.broadcastPacket(packetObject, this);
+          }
+        } else if (packetObject.type === "PushSaveState") {
+          const roomStateRequests = this.room.requestingStateClients;
+          roomStateRequests.forEach((client) => {
+            client.sendPacket(packetObject);
+          });
+          this.room.requestingStateClients = [];
+        } else {
+          this.room.broadcastPacket(packetObject, this);
+        }
       }
     } catch (error) {
       this.log(`Error handling packet: ${error.message}`);
@@ -168,6 +181,7 @@ class Client {
 class Room {
   public id: string;
   public clients: Client[] = [];
+  public requestingStateClients: Client[] = [];
 
   constructor(id: string) {
     this.id = id;
