@@ -118,7 +118,9 @@ class Client {
       this.lastPacketReceivedAt = Date.now();
       const packetString = decoder.decode(packet);
       const packetObject: Packet = JSON.parse(packetString);
-      this.log(`Received ${packetObject.type} packet`);
+      if (packetObject.type !== "PlayerPosition") {
+        this.log(`Received ${packetObject.type} packet`);
+      }
 
       if (packetObject.roomId && !this.room) {
         this.server.getOrCreateRoom(packetObject.roomId).addClient(this);
@@ -148,7 +150,9 @@ class Client {
 
   async sendPacket(packetObject: Packet) {
     try {
-      this.log(`Sending ${packetObject.type} packet`);
+      if (packetObject.type !== "PlayerPosition") {
+        this.log(`Sending ${packetObject.type} packet`);
+      }
       const packetString = JSON.stringify(packetObject);
       const packet = encoder.encode(packetString + "\n");
 
@@ -221,7 +225,9 @@ class Room {
   }
 
   broadcastPacket(packetObject: Packet, sender: Client) {
-    this.log(`Broadcasting ${packetObject.type} packet from ${sender.id}`);
+    if (packetObject.type !== "PlayerPosition") {
+      this.log(`Broadcasting ${packetObject.type} packet from ${sender.id}`);
+    }
     packetObject.clientId = sender.id;
 
     for (const client of this.clients) {
