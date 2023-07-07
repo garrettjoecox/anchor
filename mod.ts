@@ -3,11 +3,33 @@ import { writeAll } from "https://deno.land/std@0.192.0/streams/write_all.ts";
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
-interface Packet {
+type ClientData = Record<string, any>;
+
+interface BasePacket {
   clientId?: number;
   roomId: string;
-  type: string;
+  quiet?: boolean;
+  targetClientId?: number;
 }
+
+interface UpdateClientDataPacket extends BasePacket {
+  type: "UPDATE_CLIENT_DATA";
+  data: ClientData;
+}
+
+interface AllClientDataPacket extends BasePacket {
+  type: "ALL_CLIENT_DATA";
+  clients: ClientData[];
+}
+
+interface OtherPackets extends BasePacket {
+  type: "REQUEST_SAVE_STATE" | "PUSH_SAVE_STATE";
+}
+
+type Packet =
+  | UpdateClientDataPacket
+  | AllClientDataPacket
+  | OtherPackets;
 
 class Server {
   private listener?: Deno.Listener;
@@ -22,6 +44,7 @@ class Server {
         try {
           const client = new Client(connection, this);
           this.clients.push(client);
+          this.log(`Client Count: ${this.clients.length}`);
         } catch (error) {
           this.log(`Error connecting client: ${error.message}`);
         }
@@ -34,6 +57,7 @@ class Server {
   removeClient(client: Client) {
     const index = this.clients.indexOf(client);
     this.clients.splice(index, 1);
+    this.log(`Client Count: ${this.clients.length}`);
   }
 
   getOrCreateRoom(id: string) {
@@ -42,14 +66,16 @@ class Server {
       return room;
     }
 
-    const newRoom = new Room(id);
+    const newRoom = new Room(id, this);
     this.rooms.push(newRoom);
+    this.log(`Room Count: ${this.rooms.length}`);
     return newRoom;
   }
 
   removeRoom(room: Room) {
     const index = this.rooms.indexOf(room);
     this.rooms.splice(index, 1);
+    this.log(`Room Count: ${this.rooms.length}`);
   }
 
   log(message: string) {
@@ -59,10 +85,10 @@ class Server {
 
 class Client {
   public id: number;
+  public data: ClientData = {};
   private connection: Deno.Conn;
   public server: Server;
   public room?: Room;
-  public lastPacketReceivedAt: number = Date.now();
 
   constructor(connection: Deno.Conn, server: Server) {
     this.connection = connection;
@@ -115,33 +141,52 @@ class Client {
 
   handlePacket(packet: Uint8Array) {
     try {
-      this.lastPacketReceivedAt = Date.now();
       const packetString = decoder.decode(packet);
       const packetObject: Packet = JSON.parse(packetString);
-      if (packetObject.type !== "PlayerPosition") {
-        this.log(`Received ${packetObject.type} packet`);
+      packetObject.clientId = this.id;
+
+      if (!packetObject.quiet) {
+        this.log(`-> ${packetObject.type} packet`);
+      }
+
+      if (packetObject.type === "UPDATE_CLIENT_DATA") {
+        this.data = packetObject.data;
       }
 
       if (packetObject.roomId && !this.room) {
         this.server.getOrCreateRoom(packetObject.roomId).addClient(this);
       }
 
-      // Send packets to other clients in the room
-      if (this.room) {
-        if (packetObject.type === "RequestSaveState") {
-          if (this.room.clients.length > 1) {
-            this.room.requestingStateClients.push(this);
-            this.room.broadcastPacket(packetObject, this);
-          }
-        } else if (packetObject.type === "PushSaveState") {
-          const roomStateRequests = this.room.requestingStateClients;
-          roomStateRequests.forEach((client) => {
-            client.sendPacket(packetObject);
-          });
-          this.room.requestingStateClients = [];
+      if (!this.room) {
+        this.log("Not in a room, ignoring packet");
+        return;
+      }
+
+      if (packetObject.targetClientId) {
+        const targetClient = this.room.clients.find((client) =>
+          client.id === packetObject.targetClientId
+        );
+        if (targetClient) {
+          targetClient.sendPacket(packetObject);
         } else {
+          this.log(`Target client ${packetObject.targetClientId} not found`);
+        }
+        return;
+      }
+
+      if (packetObject.type === "REQUEST_SAVE_STATE") {
+        if (this.room.clients.length > 1) {
+          this.room.requestingStateClients.push(this);
           this.room.broadcastPacket(packetObject, this);
         }
+      } else if (packetObject.type === "PUSH_SAVE_STATE") {
+        const roomStateRequests = this.room.requestingStateClients;
+        roomStateRequests.forEach((client) => {
+          client.sendPacket(packetObject);
+        });
+        this.room.requestingStateClients = [];
+      } else {
+        this.room.broadcastPacket(packetObject, this);
       }
     } catch (error) {
       this.log(`Error handling packet: ${error.message}`);
@@ -150,8 +195,8 @@ class Client {
 
   async sendPacket(packetObject: Packet) {
     try {
-      if (packetObject.type !== "PlayerPosition") {
-        this.log(`Sending ${packetObject.type} packet`);
+      if (!packetObject.quiet) {
+        this.log(`<- ${packetObject.type} packet`);
       }
       const packetString = JSON.stringify(packetObject);
       const packet = encoder.encode(packetString + "\n");
@@ -165,10 +210,10 @@ class Client {
 
   disconnect() {
     try {
-      this.server.removeClient(this);
       if (this.room) {
         this.room.removeClient(this);
       }
+      this.server.removeClient(this);
       this.connection.close();
     } catch (error) {
       this.log(`Error disconnecting: ${error.message}`);
@@ -184,11 +229,13 @@ class Client {
 
 class Room {
   public id: string;
+  public server: Server;
   public clients: Client[] = [];
   public requestingStateClients: Client[] = [];
 
-  constructor(id: string) {
+  constructor(id: string, server: Server) {
     this.id = id;
+    this.server = server;
     this.log("Created");
   }
 
@@ -197,7 +244,7 @@ class Room {
     this.clients.push(client);
     client.room = this;
 
-    this.broadcastRoomClientCount();
+    this.broadcastAllClientData();
   }
 
   removeClient(client: Client) {
@@ -206,18 +253,24 @@ class Room {
     this.clients.splice(index, 1);
     client.room = undefined;
 
-    this.broadcastRoomClientCount();
+    if (this.clients.length) {
+      this.broadcastAllClientData();
+    } else {
+      this.log("No clients left, removing room");
+      this.server.removeRoom(this);
+    }
   }
 
-  broadcastRoomClientCount() {
-    this.log("Broadcasting RoomClientCount to all");
+  broadcastAllClientData() {
+    this.log("<- ALL_CLIENT_DATA packet");
     for (const client of this.clients) {
       const packetObject = {
+        type: "ALL_CLIENT_DATA" as const,
         roomId: this.id,
-        type: "RoomClientIds",
-        clientIds: this.clients.map((c) => c.id).filter((id) =>
-          id !== client.id
-        ),
+        clients: this.clients.filter((c) => c !== client).map((c) => ({
+          clientId: c.id,
+          ...c.data,
+        })),
       };
 
       client.sendPacket(packetObject);
@@ -225,10 +278,9 @@ class Room {
   }
 
   broadcastPacket(packetObject: Packet, sender: Client) {
-    if (packetObject.type !== "PlayerPosition") {
-      this.log(`Broadcasting ${packetObject.type} packet from ${sender.id}`);
+    if (!packetObject.quiet) {
+      this.log(`<- ${packetObject.type} packet from ${sender.id}`);
     }
-    packetObject.clientId = sender.id;
 
     for (const client of this.clients) {
       if (client !== sender) {
