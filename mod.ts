@@ -50,7 +50,7 @@ class Server {
 
   async start() {
     const mPort = Deno.args[0];
-    if (mPort == null) {
+    if (mPort == null or !Number.IsInteger(mPort)) {
       this.listener = Deno.listen({ port: 43384 });
     } else {
       this.listener = Deno.listen({ port: mPort });
