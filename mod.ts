@@ -51,10 +51,9 @@ class Server {
   async start() {
     const mPort = Deno.args[0];
     if (Number.isInteger(mPort)) {
-      this.listener = Deno.listen({ port: 43384 });
-    } else {
-      this.listener = Deno.listen({ port: mPort });
+      mPort = 43384
     }
+    this.listener = Deno.listen({ port: mPort });
     this.log("Server Started");
     try {
       for await (const connection of this.listener) {
