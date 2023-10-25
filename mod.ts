@@ -49,7 +49,7 @@ class Server {
   public rooms: Room[] = [];
 
   async start() {
-    var mPort = 43384;
+    let mPort = 43384;
     if (Number.isInteger(parseInt(Deno.args[0]))) {
       mPort = parseInt(Deno.args[0]);
     }
