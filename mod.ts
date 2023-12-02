@@ -1,5 +1,6 @@
 import { writeAll } from "https://deno.land/std@0.192.0/streams/write_all.ts";
 import { readLines } from "https://deno.land/std@0.193.0/io/read_lines.ts";
+import { encodeHex } from "https://deno.land/std@0.207.0/encoding/hex.ts";
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -33,7 +34,11 @@ interface DisableAnchorPacket extends BasePacket {
 }
 
 interface OtherPackets extends BasePacket {
-  type: "REQUEST_SAVE_STATE" | "PUSH_SAVE_STATE";
+  type:
+    | "REQUEST_SAVE_STATE"
+    | "PUSH_SAVE_STATE"
+    | "GAME_COMPLETE"
+    | "HEARTBEAT";
 }
 
 type Packet =
@@ -43,14 +48,91 @@ type Packet =
   | AllClientDataPacket
   | OtherPackets;
 
+interface ServerStats {
+  lastHeartbeat: number;
+  clientSHAs: Record<string, boolean>;
+  onlineCount: number;
+  gamesCompleted: number;
+  pid: number;
+}
+
+const port =
+  (Deno.env.has("PORT") && !isNaN(parseInt(Deno.env.get("PORT")!, 10)))
+    ? parseInt(Deno.env.get("PORT")!, 10)
+    : 43385;
+let quietMode = !!Deno.env.has("QUIET");
+
 class Server {
   private listener?: Deno.Listener;
   public clients: Client[] = [];
   public rooms: Room[] = [];
+  public stats: ServerStats = {
+    lastHeartbeat: Date.now(),
+    clientSHAs: {},
+    onlineCount: 0,
+    gamesCompleted: 0,
+    pid: Deno.pid,
+  };
 
   async start() {
-    this.listener = Deno.listen({ port: 43384 });
-    this.log("Server Started");
+    await this.parseStats();
+
+    this.heartbeat();
+
+    this.startServer();
+  }
+
+  async parseStats() {
+    try {
+      const statsString = await Deno.readTextFile("./stats.json");
+      this.stats = Object.assign(this.stats, JSON.parse(statsString));
+      this.stats.pid = Deno.pid;
+      this.log("Loaded stats file");
+    } catch (_) {
+      this.log("No stats file found");
+    }
+  }
+
+  async heartbeat() {
+    try {
+      for (const client of server.clients) {
+        await client.sendPacket({
+          type: "HEARTBEAT",
+        });
+      }
+    } catch (error) {
+      this.log(`Error sending heartbeat to clients: ${error.message}`);
+    }
+
+    try {
+      this.stats.lastHeartbeat = Date.now();
+      this.stats.onlineCount = this.clients.length;
+
+      await this.saveStats();
+    } catch (error) {
+      this.log(`Error saving stats: ${error.message}`);
+    }
+
+    setTimeout(() => {
+      this.heartbeat();
+    }, 1000 * 30);
+  }
+
+  async saveStats() {
+    try {
+      await Deno.writeTextFile(
+        "./stats.json",
+        JSON.stringify(this.stats, null, 4),
+      );
+    } catch (error) {
+      this.log(`Error saving stats: ${error.message}`);
+    }
+  }
+
+  async startServer() {
+    this.listener = Deno.listen({ port });
+
+    this.log(`Server Started on port ${port}`);
     try {
       for await (const connection of this.listener) {
         try {
@@ -86,15 +168,15 @@ class Server {
     this.rooms.splice(index, 1);
   }
 
-  log(message: string) {
-    console.log(`[Server]: ${message}`);
+  log(...data: any[]) {
+    console.log(`[Server]:`, ...data);
   }
 }
 
 class Client {
   public id: number;
   public data: ClientData = {};
-  private connection: Deno.Conn;
+  public connection: Deno.Conn;
   public server: Server;
   public room?: Room;
 
@@ -103,8 +185,21 @@ class Client {
     this.server = server;
     this.id = connection.rid;
 
-    this.log("Connected");
+    // SHA256 to get a rough idea of how many unique players there are
+    crypto.subtle.digest(
+      "SHA-256",
+      encoder.encode((this.connection.remoteAddr as Deno.NetAddr).hostname),
+    )
+      .then((hasBuffer) => {
+        this.server.stats.onlineCount++;
+        this.server.stats.clientSHAs[encodeHex(hasBuffer)] = true;
+      })
+      .catch((error) => {
+        this.log(`Error hashing client: ${error.message}`);
+      });
+
     this.waitForData();
+    this.log("Connected");
   }
 
   async waitForData() {
@@ -139,7 +234,7 @@ class Client {
         }
 
         // Extract the packet
-        const packet = data.subarray(0, delimiterIndex + 1);
+        const packet = data.subarray(0, delimiterIndex);
         data = data.subarray(delimiterIndex + 1);
 
         this.handlePacket(packet);
@@ -153,12 +248,16 @@ class Client {
       const packetObject: Packet = JSON.parse(packetString);
       packetObject.clientId = this.id;
 
-      if (!packetObject.quiet) {
+      if (!packetObject.quiet && !quietMode) {
         this.log(`-> ${packetObject.type} packet`);
       }
 
       if (packetObject.type === "UPDATE_CLIENT_DATA") {
         this.data = packetObject.data;
+      }
+
+      if (packetObject.type === "GAME_COMPLETE") {
+        this.server.stats.gamesCompleted++;
       }
 
       if (packetObject.roomId && !this.room) {
@@ -203,11 +302,11 @@ class Client {
 
   async sendPacket(packetObject: Packet) {
     try {
-      if (!packetObject.quiet) {
+      if (!packetObject.quiet && !quietMode) {
         this.log(`<- ${packetObject.type} packet`);
       }
       const packetString = JSON.stringify(packetObject);
-      const packet = encoder.encode(packetString + "\n");
+      const packet = encoder.encode(packetString + "\0");
 
       await writeAll(this.connection, packet);
     } catch (error) {
@@ -226,6 +325,7 @@ class Client {
     } catch (error) {
       this.log(`Error disconnecting: ${error.message}`);
     } finally {
+      this.server.stats.onlineCount--;
       this.log("Disconnected");
     }
   }
@@ -270,7 +370,9 @@ class Room {
   }
 
   broadcastAllClientData() {
-    this.log("<- ALL_CLIENT_DATA packet");
+    if (!quietMode) {
+      this.log("<- ALL_CLIENT_DATA packet");
+    }
     for (const client of this.clients) {
       const packetObject = {
         type: "ALL_CLIENT_DATA" as const,
@@ -286,7 +388,7 @@ class Room {
   }
 
   broadcastPacket(packetObject: Packet, sender: Client) {
-    if (!packetObject.quiet) {
+    if (!packetObject.quiet && !quietMode) {
       this.log(`<- ${packetObject.type} packet from ${sender.id}`);
     }
 
@@ -311,7 +413,7 @@ function concatUint8Arrays(a: Uint8Array, b: Uint8Array): Uint8Array {
 
 function findDelimiterIndex(data: Uint8Array): number {
   for (let i = 0; i < data.length; i++) {
-    if (data[i] === 10 /* newline character */) {
+    if (data[i] === 0 /* null terminator */) {
       return i;
     }
   }
@@ -350,7 +452,7 @@ async function stop(message = "Server restarting") {
   Deno.exit();
 }
 
-(async () => {
+(async function processStdin() {
   try {
     for await (const line of readLines(Deno.stdin)) {
       const [command, ...args] = line.split(" ");
@@ -361,6 +463,8 @@ async function stop(message = "Server restarting") {
           console.log(
             `Available commands:
   help: Show this help message
+  stats: Print server stats
+  quiet: Toggle quiet mode
   roomCount: Show the number of rooms
   clientCount: Show the number of clients
   list: List all rooms and clients
@@ -378,6 +482,16 @@ async function stop(message = "Server restarting") {
         }
         case "clientCount": {
           console.log(`Client count: ${server.clients.length}`);
+          break;
+        }
+        case "quiet": {
+          quietMode = !quietMode;
+          console.log(`Quiet mode: ${quietMode}`);
+          break;
+        }
+        case "stats": {
+          const { clientSHAs: _, ...stats } = server.stats;
+          console.log(stats);
           break;
         }
         case "list": {
@@ -439,6 +553,7 @@ async function stop(message = "Server restarting") {
       }
     }
   } catch (error) {
-    console.error("Error readingt from stdin: ", error.message);
+    console.error("Error reading from stdin: ", error.message);
+    processStdin();
   }
 })();
