@@ -1,9 +1,9 @@
 import { load } from "https://x.nest.land/Yenv@1.0.0/mod.ts";
-import { fixGatewayWebsocket } from "https://x.nest.land/katsura@1.3.9/src/discordenoFixes/gatewaySocket.ts";
 import {
   createBot,
+  Intents,
   PresenceStatus,
-} from "npm:@discordeno/bot@19.0.0-next.5c42bdd";
+} from "npm:@discordeno/bot@19.0.0-next.8b3bc4b";
 
 interface ServerStats {
   lastHeartbeat: number;
@@ -25,6 +25,7 @@ let restarting = false;
 
 const bot = createBot({
   token: env.TOKEN,
+  intents: Intents.GuildPresences | Intents.Guilds,
   events: {
     ready: () => {
       console.log("Bot online");
@@ -32,9 +33,6 @@ const bot = createBot({
     },
   },
 });
-
-// Use this function with the gateway manager
-fixGatewayWebsocket(bot.gateway);
 
 (async () => {
   try {
