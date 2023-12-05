@@ -11,13 +11,42 @@ multiplayer ventures.
 
 ## How to
 
-You don't need this, I'm hosting this on my end. Instead see
+You don't technically need this, I'm hosting this on my end. Instead see
 [the associated SoH Build](https://github.com/garrettjoecox/OOT/pull/52)
+
+If you would like to host your own server:
+
+- [Install deno](https://docs.deno.com/runtime/manual/getting_started/installation)
+- If you don't want to make any code changes, you can run it straight from
+  github with
+
+```sh
+deno run --allow-net https://raw.githubusercontent.com/garrettjoecox/anchor/main/mod.ts
+```
+
+- If you want to make code changes, clone the repo:
+  https://github.com/garrettjoecox/anchor and run it with
+
+```sh
+deno run --allow-net --allow-read mod.ts
+```
+
+- In the network tab update your remote IP to point to your server, eg:
+
+```diff
+-"gRemoteGIIP": "anchor.proxysaw.dev",
++"gRemoteGIIP": "127.0.0.1",
+```
 
 ## Packet protocol
 
 > This is for anyone wanting to extend the client side of anchor while still
 > using the hosted server
+
+Packets are delimited by a null terminator `\0`. Clients built prior to December
+5th 2023 instead use a newline `\n` as a delimiter, if you are using one of
+these clients you will need to use the `legacy-newline-terminator` branch of
+this repo.
 
 ```ts
 // Packets that the client will receive from server
