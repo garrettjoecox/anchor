@@ -151,6 +151,19 @@ let activtiyState = ActivityState.OnlinePlayers;
       }
     }
 
+    try {
+      // Write screen config so that it uses a fresh log file
+      await Deno.writeTextFile(
+        "./.screenrc",
+        `logfile "logs/${
+          new Date().toLocaleString().replace(/[\s,:/]/g, "-")
+        }.log"
+        logfile flush 1`,
+      );
+    } catch (error) {
+      console.error("An error occured while writing screen config", error);
+    }
+
     if (stats.pid) {
       try {
         Deno.kill(stats.pid, "SIGINT");
@@ -163,14 +176,18 @@ let activtiyState = ActivityState.OnlinePlayers;
       "screen",
       {
         args: [
-          "-dm",
-          "-S",
+          "-c",
+          "./.screenrc",
+          "-dmLS",
           "anchor",
           "deno",
           "run",
           "--allow-all",
           "mod.ts",
         ],
+        env: {
+          QUIET: "TRUE",
+        },
         stdout: "null",
         stderr: "null",
         stdin: "null",
