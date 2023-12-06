@@ -172,6 +172,7 @@ let activtiyState = ActivityState.OnlinePlayers;
         `logfile "logs/${
           new Date().toLocaleString().replace(/[\s,:/]/g, "-")
         }.log"
+deflog on
 logfile flush 1`,
       );
     } catch (error) {
