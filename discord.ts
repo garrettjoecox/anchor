@@ -1,10 +1,10 @@
-import { load } from "https://x.nest.land/Yenv@1.0.0/mod.ts";
+import { load } from "https://deno.land/std@0.208.0/dotenv/mod.ts";
 import {
+  Bot,
   createBot,
   Intents,
   PresenceStatus,
 } from "npm:@discordeno/bot@19.0.0-next.8b3bc4b";
-
 interface ServerStats {
   lastHeartbeat: number;
   clientSHAs: Record<string, boolean>;
@@ -13,29 +13,30 @@ interface ServerStats {
   pid: number;
 }
 
-const env = await load({
-  TOKEN: /.+/,
-  RESTART_CHANNEL: /.+/,
-  RESTART_MENTION: /.+/,
-});
+const env = await load();
 
 let botReady = false;
 let anchorOnline = false;
 let restarting = false;
-
-const bot = createBot({
-  token: env.TOKEN,
-  intents: Intents.GuildPresences | Intents.Guilds,
-  events: {
-    ready: () => {
-      console.log("Bot online");
-      botReady = true;
-    },
-  },
-});
+let bot: Bot;
 
 (async () => {
   try {
+    if (!env.TOKEN) {
+      throw new Error("No token provided");
+    }
+
+    bot = createBot({
+      token: env.TOKEN,
+      intents: Intents.GuildPresences | Intents.Guilds,
+      events: {
+        ready: () => {
+          console.log("Bot online");
+          botReady = true;
+        },
+      },
+    });
+
     await bot.start();
   } catch (error) {
     console.error("An error occured while starting the bot", error);
@@ -87,7 +88,7 @@ let activtiyState = ActivityState.OnlinePlayers;
       activtiy = "/ Offline";
     }
 
-    await bot.gateway.editBotStatus({
+    await bot!.gateway.editBotStatus({
       status: status,
       activities: [
         {
@@ -114,7 +115,7 @@ let activtiyState = ActivityState.OnlinePlayers;
         console.log("Server is back online");
         if (botReady && env.RESTART_CHANNEL) {
           try {
-            bot.helpers.sendMessage(env.RESTART_CHANNEL, {
+            bot!.helpers.sendMessage(env.RESTART_CHANNEL, {
               content: "Anchor server back online!",
             });
           } catch (error) {
@@ -143,7 +144,7 @@ let activtiyState = ActivityState.OnlinePlayers;
           message += ` CC <@${env.RESTART_MENTION}>`;
         }
 
-        bot.helpers.sendMessage(env.RESTART_CHANNEL, {
+        bot!.helpers.sendMessage(env.RESTART_CHANNEL, {
           content: message,
         });
       } catch (error) {
