@@ -6,7 +6,7 @@ import {
   PresenceStatus,
 } from "npm:@discordeno/bot@19.0.0-next.8b3bc4b";
 interface ServerStats {
-  lastHeartbeat: number;
+  lastStatsHeartbeat: number;
   clientSHAs: Record<string, boolean>;
   onlineCount: number;
   gamesCompleted: number;
@@ -109,7 +109,7 @@ let activtiyState = ActivityState.OnlinePlayers;
 (async function autoRestart() {
   try {
     let stats: ServerStats = {
-      lastHeartbeat: 0,
+      lastStatsHeartbeat: 0,
       clientSHAs: {},
       onlineCount: 0,
       gamesCompleted: 0,
@@ -122,8 +122,8 @@ let activtiyState = ActivityState.OnlinePlayers;
       console.error("An error occured while reading stats.json", error);
     }
 
-    // Heartbeat occured in last 2 minutes (4 heartbeats)
-    if (stats.lastHeartbeat > Date.now() - 1000 * 60 * 2) {
+    // Heartbeat occured in last 30 seconds
+    if (stats.lastStatsHeartbeat > Date.now() - 1000 * 30) {
       if (restarting) {
         console.log("Server is back online");
         if (botReady && env.RESTART_CHANNEL) {

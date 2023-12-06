@@ -49,7 +49,7 @@ type Packet =
   | OtherPackets;
 
 interface ServerStats {
-  lastHeartbeat: number;
+  lastStatsHeartbeat: number;
   clientSHAs: Record<string, boolean>;
   onlineCount: number;
   gamesCompleted: number;
@@ -67,7 +67,7 @@ class Server {
   public clients: Client[] = [];
   public rooms: Room[] = [];
   public stats: ServerStats = {
-    lastHeartbeat: Date.now(),
+    lastStatsHeartbeat: Date.now(),
     clientSHAs: {},
     onlineCount: 0,
     gamesCompleted: 0,
@@ -77,7 +77,8 @@ class Server {
   async start() {
     await this.parseStats();
 
-    this.heartbeat();
+    this.statsHeartbeat();
+    this.clientHeartbeat();
 
     this.startServer();
   }
@@ -93,19 +94,9 @@ class Server {
     }
   }
 
-  async heartbeat() {
+  async statsHeartbeat() {
     try {
-      for (const client of server.clients) {
-        await client.sendPacket({
-          type: "HEARTBEAT",
-        });
-      }
-    } catch (error) {
-      this.log(`Error sending heartbeat to clients: ${error.message}`);
-    }
-
-    try {
-      this.stats.lastHeartbeat = Date.now();
+      this.stats.lastStatsHeartbeat = Date.now();
       this.stats.onlineCount = this.clients.length;
 
       await this.saveStats();
@@ -114,7 +105,23 @@ class Server {
     }
 
     setTimeout(() => {
-      this.heartbeat();
+      this.statsHeartbeat();
+    }, 2000);
+  }
+
+  async clientHeartbeat() {
+    try {
+      await Promise.all(server.clients.map((client) => {
+        return client.sendPacket({
+          type: "HEARTBEAT",
+        }).catch((_) => {}); // Ignore errors, client will disconnect if it's a problem
+      }));
+    } catch (error) {
+      this.log(`Error sending heartbeat to clients: ${error.message}`);
+    }
+
+    setTimeout(() => {
+      this.clientHeartbeat();
     }, 1000 * 30);
   }
 
@@ -312,7 +319,15 @@ class Client {
       const packetString = JSON.stringify(packetObject);
       const packet = encoder.encode(packetString + "\0");
 
-      await writeAll(this.connection, packet);
+      // Wait for writeAll to complete, if it takes longer than 30 seconds, disconnect
+      await Promise.race([
+        writeAll(this.connection, packet),
+        new Promise((_, reject) => {
+          setTimeout(() => {
+            reject(new Error("Timeout, took longer than 30 seconds to send"));
+          }, 1000 * 30);
+        }),
+      ]);
     } catch (error) {
       this.log(`Error sending packet: ${error.message}`);
       this.disconnect();
