@@ -1,6 +1,6 @@
-import { writeAll } from "https://deno.land/std@0.192.0/streams/write_all.ts";
-import { readLines } from "https://deno.land/std@0.193.0/io/read_lines.ts";
-import { encodeHex } from "https://deno.land/std@0.207.0/encoding/hex.ts";
+import { writeAll } from "https://deno.land/std@0.208.0/streams/write_all.ts";
+import { readLines } from "https://deno.land/std@0.208.0/io/read_lines.ts";
+import { encodeHex } from "https://deno.land/std@0.208.0/encoding/hex.ts";
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -149,7 +149,9 @@ class Server {
 
   removeClient(client: Client) {
     const index = this.clients.indexOf(client);
-    this.clients.splice(index, 1);
+    if (index !== -1) {
+      this.clients.splice(index, 1);
+    }
   }
 
   getOrCreateRoom(id: string) {
@@ -165,7 +167,9 @@ class Server {
 
   removeRoom(room: Room) {
     const index = this.rooms.indexOf(room);
-    this.rooms.splice(index, 1);
+    if (index !== -1) {
+      this.rooms.splice(index, 1);
+    }
   }
 
   log(...data: any[]) {
@@ -358,8 +362,10 @@ class Room {
   removeClient(client: Client) {
     this.log(`Removing client ${client.id}`);
     const index = this.clients.indexOf(client);
-    this.clients.splice(index, 1);
-    client.room = undefined;
+    if (index !== -1) {
+      this.clients.splice(index, 1);
+      client.room = undefined;
+    }
 
     if (this.clients.length) {
       this.broadcastAllClientData();
@@ -421,7 +427,16 @@ function findDelimiterIndex(data: Uint8Array): number {
 }
 
 const server = new Server();
-server.start();
+server.start().catch((error) => {
+  console.error("Error starting server: ", error);
+  Deno.exit(1);
+});
+
+globalThis.addEventListener("unhandledrejection", (e) => {
+  console.error("Unhandled rejection at:", e.promise, "reason:", e.reason);
+  e.preventDefault();
+  Deno.exit(1);
+});
 
 function sendServerMessage(client: Client, message: string) {
   return client.sendPacket({
