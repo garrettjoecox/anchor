@@ -1,4 +1,4 @@
 .env
 stats.json
-logs/
+*.log
 .screenrc

@@ -106,8 +106,19 @@ let activtiyState = ActivityState.OnlinePlayers;
 
 (async function autoRestart() {
   try {
-    const statsString = await Deno.readTextFile("./stats.json");
-    const stats: ServerStats = JSON.parse(statsString);
+    let stats: ServerStats = {
+      lastHeartbeat: 0,
+      clientSHAs: {},
+      onlineCount: 0,
+      gamesCompleted: 0,
+      pid: 0,
+    };
+    try {
+      const statsString = await Deno.readTextFile("./stats.json");
+      stats = JSON.parse(statsString);
+    } catch (error) {
+      console.error("An error occured while reading stats.json", error);
+    }
 
     // Heartbeat occured in last 2 minutes (4 heartbeats)
     if (stats.lastHeartbeat > Date.now() - 1000 * 60 * 2) {
@@ -159,7 +170,7 @@ let activtiyState = ActivityState.OnlinePlayers;
         `logfile "logs/${
           new Date().toLocaleString().replace(/[\s,:/]/g, "-")
         }.log"
-        logfile flush 1`,
+logfile flush 1`,
       );
     } catch (error) {
       console.error("An error occured while writing screen config", error);
