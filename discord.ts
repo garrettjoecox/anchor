@@ -23,7 +23,8 @@ let bot: Bot;
 (async () => {
   try {
     if (!env.TOKEN) {
-      throw new Error("No token provided");
+      console.warn("No bot token provided, continuing without bot");
+      return;
     }
 
     bot = createBot({
@@ -39,7 +40,8 @@ let bot: Bot;
 
     await bot.start();
   } catch (error) {
-    console.error("An error occured while starting the bot", error);
+    console.warn("An error occured while starting the bot", error);
+    console.warn("Continuing without bot functionality");
   }
 })();
 
