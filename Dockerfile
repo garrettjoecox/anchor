@@ -8,4 +8,4 @@ WORKDIR /app
 # Prefer not to run as root.
 USER deno
 
-CMD ["run", "--allow-net", "https://raw.githubusercontent.com/garrettjoecox/anchor/main/mod.ts"]
+CMD ["run", "--allow-all", "https://raw.githubusercontent.com/garrettjoecox/anchor/main/mod.ts"]
