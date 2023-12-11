@@ -5,6 +5,7 @@ import {
   Intents,
   PresenceStatus,
 } from "npm:@discordeno/bot@19.0.0-next.8b3bc4b";
+
 interface ServerStats {
   lastStatsHeartbeat: number;
   clientSHAs: Record<string, boolean>;
@@ -13,12 +14,26 @@ interface ServerStats {
   pid: number;
 }
 
+enum ActivityState {
+  OnlinePlayers,
+  UniquePlayers,
+  GamesCompleted,
+}
+
 const env = await load();
 
 let botReady = false;
 let anchorOnline = false;
 let restarting = false;
 let bot: Bot;
+let activtiyState = ActivityState.OnlinePlayers;
+let stats: ServerStats = {
+  lastStatsHeartbeat: 0,
+  clientSHAs: {},
+  onlineCount: 0,
+  gamesCompleted: 0,
+  pid: 0,
+};
 
 (async () => {
   try {
@@ -45,13 +60,16 @@ let bot: Bot;
   }
 })();
 
-enum ActivityState {
-  OnlinePlayers,
-  UniquePlayers,
-  GamesCompleted,
-}
+(async function refreshStats() {
+  try {
+    const statsString = await Deno.readTextFile("./stats.json");
+    stats = JSON.parse(statsString);
+  } catch (error) {
+    console.error("An error occured while reading stats.json", error);
+  }
 
-let activtiyState = ActivityState.OnlinePlayers;
+  setTimeout(refreshStats, 1000 * 5);
+})();
 
 (async function refreshStatus() {
   activtiyState += 1;
@@ -64,9 +82,6 @@ let activtiyState = ActivityState.OnlinePlayers;
   }
 
   try {
-    const statsString = await Deno.readTextFile("./stats.json");
-    const stats: ServerStats = JSON.parse(statsString);
-
     let status: keyof typeof PresenceStatus = "online";
     let activtiy = "";
     switch (activtiyState) {
@@ -108,20 +123,6 @@ let activtiyState = ActivityState.OnlinePlayers;
 
 (async function autoRestart() {
   try {
-    let stats: ServerStats = {
-      lastStatsHeartbeat: 0,
-      clientSHAs: {},
-      onlineCount: 0,
-      gamesCompleted: 0,
-      pid: 0,
-    };
-    try {
-      const statsString = await Deno.readTextFile("./stats.json");
-      stats = JSON.parse(statsString);
-    } catch (error) {
-      console.error("An error occured while reading stats.json", error);
-    }
-
     // Heartbeat occured in last 30 seconds
     if (stats.lastStatsHeartbeat > Date.now() - 1000 * 30) {
       if (restarting) {

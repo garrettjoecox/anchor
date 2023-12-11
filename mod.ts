@@ -106,7 +106,7 @@ class Server {
 
     setTimeout(() => {
       this.statsHeartbeat();
-    }, 2000);
+    }, 2500);
   }
 
   async clientHeartbeat() {
