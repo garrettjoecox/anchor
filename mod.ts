@@ -1,5 +1,4 @@
 import { writeAll } from "https://deno.land/std@0.208.0/streams/write_all.ts";
-import { readLines } from "https://deno.land/std@0.208.0/io/read_lines.ts";
 import { encodeHex } from "https://deno.land/std@0.208.0/encoding/hex.ts";
 
 const decoder = new TextDecoder();
@@ -484,8 +483,8 @@ async function stop(message = "Server restarting") {
 
 (async function processStdin() {
   try {
-    for await (const line of readLines(Deno.stdin)) {
-      const [command, ...args] = line.split(" ");
+    for await (const line of Deno.stdin.readable) {
+      const [command, ...args] = decoder.decode(line).split(" ");
 
       switch (command) {
         default:
