@@ -1,4 +1,3 @@
-import { writeAll } from "https://deno.land/std@0.208.0/streams/write_all.ts";
 import { encodeHex } from "https://deno.land/std@0.208.0/encoding/hex.ts";
 
 const decoder = new TextDecoder();
@@ -318,15 +317,22 @@ class Client {
       const packetString = JSON.stringify(packetObject);
       const packet = encoder.encode(packetString + "\0");
 
-      // Wait for writeAll to complete, if it takes longer than 30 seconds, disconnect
-      await Promise.race([
-        writeAll(this.connection, packet),
-        new Promise((_, reject) => {
-          setTimeout(() => {
-            reject(new Error("Timeout, took longer than 30 seconds to send"));
-          }, 1000 * 30);
-        }),
-      ]);
+      //Only write if the player we are sending the packet to's writer is not locked
+      if(!this.connection.writable.locked) {
+        const writer = this.connection.writable.getWriter();
+
+        // Wait for write to complete, if it takes longer than 30 seconds, disconnect
+        await Promise.race([
+          await writer.write(packet),
+          new Promise((_, reject) => {
+            setTimeout(() => {
+              reject(new Error("Timeout, took longer than 30 seconds to send"));
+            }, 1000 * 30);
+          }),
+        ]);
+
+          writer.releaseLock();
+      }
     } catch (error) {
       this.log(`Error sending packet: ${error.message}`);
       this.disconnect();
