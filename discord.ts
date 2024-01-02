@@ -53,6 +53,13 @@ let stats: ServerStats = {
       },
     });
 
+    bot.transformers.desiredProperties.message.id = true;
+    bot.transformers.desiredProperties.user.id = true;
+    bot.transformers.desiredProperties.channel.id = true;
+    bot.transformers.desiredProperties.message.author = true;
+    bot.transformers.desiredProperties.message.editedTimestamp = true;
+    bot.transformers.desiredProperties.message.thread = true;
+
     await bot.start();
   } catch (error) {
     console.warn("An error occured while starting the bot", error);
@@ -216,4 +223,81 @@ logfile flush 1`,
   }
 
   setTimeout(autoRestart, 1000 * 10);
+})();
+
+// This channel is made up of messages that have thread channels associated with them
+// If a message has not been sent in the last 6 hours, the thread channel is deleted
+(async function pruneLFGChannel() {
+  if (!env.LFG_CHANNEL) {
+    console.warn("No LFG channel provided, not beginning pruning process");
+    return;
+  }
+
+  if (!botReady) {
+    return setTimeout(pruneLFGChannel, 1000 * 60);
+  }
+
+  try {
+    const channel = await bot!.helpers.getChannel(env.LFG_CHANNEL);
+    if (!channel) {
+      console.warn("LFG channel does not exist, not beginning pruning process");
+      return;
+    }
+
+    const lfgMessages = await bot!.helpers.getMessages(env.LFG_CHANNEL, {
+      limit: 100,
+    });
+
+    lfgMessages.forEach(async (lfgMessage) => {
+      // Ignore messages that are not 5 minutes old yet or that are the info message
+      if (
+        lfgMessage.timestamp > Date.now() - 1000 * 60 * 5 ||
+        lfgMessage.id.toString() === env.LFG_INFO_MESSAGE
+      ) {
+        return;
+      }
+
+      // If the user has not created the thread yet, delete the message
+      if (!lfgMessage.thread?.id) {
+        await bot!.helpers.deleteMessage(env.LFG_CHANNEL, lfgMessage.id);
+        return;
+      }
+
+      // fetch the last 2 messages in the thread
+      const threadMessages = await bot!.helpers.getMessages(
+        lfgMessage.thread!.id,
+        { limit: 2 },
+      );
+
+      // Filter out messages from the bot
+      const lastThreadMessage = threadMessages.find((m) =>
+        m.author.id !== bot!.id
+      );
+
+      // If there is no message, or the last message was sent more than 6 hours ago, delete the original message and thread
+      if (
+        !lastThreadMessage ||
+        lastThreadMessage.timestamp < Date.now() - 1000 * 60 * 60 * 6
+      ) {
+        await bot!.helpers.deleteMessage(env.LFG_CHANNEL, lfgMessage.id);
+        await bot!.helpers.deleteChannel(lfgMessage.thread!.id);
+        return;
+      }
+
+      // If the message is more than 5 hours old, and the bot didn't send the last message, warn the user that the thread will be deleted soon
+      if (
+        lastThreadMessage.timestamp < Date.now() - 1000 * 60 * 60 * 5 &&
+        threadMessages[0].author.id !== bot!.id
+      ) {
+        await bot!.helpers.sendMessage(lfgMessage.thread!.id, {
+          content:
+            "This thread will be deleted in 1 more hour of inactivity. Please reply to this thread to keep it alive.",
+        });
+      }
+    });
+  } catch (error) {
+    console.error("An error occured while pruning LFG channel", error);
+  }
+
+  setTimeout(pruneLFGChannel, 1000 * 60);
 })();
