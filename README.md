@@ -28,7 +28,7 @@ deno run --allow-net https://raw.githubusercontent.com/garrettjoecox/anchor/main
   https://github.com/garrettjoecox/anchor and run it with
 
 ```sh
-deno run --allow-net --allow-read mod.ts
+deno run --allow-all mod.ts
 ```
 
 - In the network tab update your remote IP to point to your server, eg:
