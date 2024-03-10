@@ -38,6 +38,17 @@ deno run --allow-all mod.ts
 +"gRemoteGIIP": "127.0.0.1",
 ```
 
+### Docker
+
+```sh
+docker run -p 43385:43385 -v /my/mnt/logs:/logs ghcr.io/garrettjoecox/anchor:latest
+```
+
+Optional environment variables can be set:
+
+- `PORT`: configures the server port inside the container; defaults to `43385`
+- `QUIET`: when set, fewer log messages are output; defaults to unset
+
 ## Packet protocol
 
 > This is for anyone wanting to extend the client side of anchor while still
