@@ -1,4 +1,5 @@
 import { encodeHex } from "https://deno.land/std@0.208.0/encoding/hex.ts";
+import { customAlphabet, nanoid } from "npm:nanoid@5.0.7";
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -192,7 +193,8 @@ class Client {
   constructor(connection: Deno.Conn, server: Server) {
     this.connection = connection;
     this.server = server;
-    this.id = connection.rid;
+    const nanoid = customAlphabet("1234567890", 10);
+    this.id = parseInt(nanoid());
 
     // SHA256 to get a rough idea of how many unique players there are
     crypto.subtle.digest(
@@ -318,7 +320,7 @@ class Client {
       const packet = encoder.encode(packetString + "\0");
 
       //Only write if the player we are sending the packet to's writer is not locked
-      if(!this.connection.writable.locked) {
+      if (!this.connection.writable.locked) {
         const writer = this.connection.writable.getWriter();
 
         // Wait for write to complete, if it takes longer than 30 seconds, disconnect
@@ -331,7 +333,7 @@ class Client {
           }),
         ]);
 
-          writer.releaseLock();
+        writer.releaseLock();
       }
     } catch (error) {
       this.log(`Error sending packet: ${error.message}`);
