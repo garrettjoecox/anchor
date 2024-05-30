@@ -492,7 +492,9 @@ async function stop(message = "Server restarting") {
 (async function processStdin() {
   try {
     for await (const line of Deno.stdin.readable) {
-      const [command, ...args] = decoder.decode(line).split(" ");
+      const [command, ...args] = decoder.decode(line).replace("\n", " ").split(
+        " ",
+      );
 
       switch (command) {
         default:
