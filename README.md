@@ -21,14 +21,14 @@ If you would like to host your own server:
   github with
 
 ```sh
-deno run --allow-net https://raw.githubusercontent.com/garrettjoecox/anchor/main/mod.ts
+deno run --allow-all https://raw.githubusercontent.com/garrettjoecox/anchor/main/mod.ts
 ```
 
 - If you want to make code changes, clone the repo:
   https://github.com/garrettjoecox/anchor and run it with
 
 ```sh
-deno run --allow-net --allow-read mod.ts
+deno run --allow-all mod.ts
 ```
 
 - In the network tab update your remote IP to point to your server, eg:
