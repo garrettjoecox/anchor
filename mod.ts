@@ -4,7 +4,7 @@ import { customAlphabet } from "npm:nanoid@5.0.7";
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
-type ClientData = Record<string, any>;
+type ClientData = Record<string, unknown>;
 
 interface BasePacket {
   clientId?: number;
@@ -178,7 +178,7 @@ class Server {
     }
   }
 
-  log(...data: any[]) {
+  log(...data: unknown[]) {
     console.log(`[Server]:`, ...data);
   }
 }
