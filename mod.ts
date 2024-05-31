@@ -1,5 +1,5 @@
 import { encodeHex } from "https://deno.land/std@0.208.0/encoding/hex.ts";
-import { customAlphabet, nanoid } from "npm:nanoid@5.0.7";
+import { customAlphabet } from "npm:nanoid@5.0.7";
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
@@ -193,7 +193,7 @@ class Client {
   constructor(connection: Deno.Conn, server: Server) {
     this.connection = connection;
     this.server = server;
-    const nanoid = customAlphabet("1234567890", 10);
+    const nanoid = customAlphabet("1234567890", 9);
     this.id = parseInt(nanoid());
 
     // SHA256 to get a rough idea of how many unique players there are
