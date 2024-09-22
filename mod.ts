@@ -1,11 +1,10 @@
-import { writeAll } from "https://deno.land/std@0.208.0/streams/write_all.ts";
-import { readLines } from "https://deno.land/std@0.208.0/io/read_lines.ts";
 import { encodeHex } from "https://deno.land/std@0.208.0/encoding/hex.ts";
+import { customAlphabet } from "npm:nanoid@5.0.7";
 
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
-type ClientData = Record<string, any>;
+type ClientData = Record<string, unknown>;
 
 interface BasePacket {
   clientId?: number;
@@ -179,7 +178,7 @@ class Server {
     }
   }
 
-  log(...data: any[]) {
+  log(...data: unknown[]) {
     console.log(`[Server]:`, ...data);
   }
 }
@@ -194,7 +193,8 @@ class Client {
   constructor(connection: Deno.Conn, server: Server) {
     this.connection = connection;
     this.server = server;
-    this.id = connection.rid;
+    const nanoid = customAlphabet("1234567890", 9);
+    this.id = parseInt(nanoid());
 
     // SHA256 to get a rough idea of how many unique players there are
     crypto.subtle.digest(
@@ -319,15 +319,22 @@ class Client {
       const packetString = JSON.stringify(packetObject);
       const packet = encoder.encode(packetString + "\0");
 
-      // Wait for writeAll to complete, if it takes longer than 30 seconds, disconnect
-      await Promise.race([
-        writeAll(this.connection, packet),
-        new Promise((_, reject) => {
-          setTimeout(() => {
-            reject(new Error("Timeout, took longer than 30 seconds to send"));
-          }, 1000 * 30);
-        }),
-      ]);
+      //Only write if the player we are sending the packet to's writer is not locked
+      if (!this.connection.writable.locked) {
+        const writer = this.connection.writable.getWriter();
+
+        // Wait for write to complete, if it takes longer than 30 seconds, disconnect
+        await Promise.race([
+          await writer.write(packet),
+          new Promise((_, reject) => {
+            setTimeout(() => {
+              reject(new Error("Timeout, took longer than 30 seconds to send"));
+            }, 1000 * 30);
+          }),
+        ]);
+
+        writer.releaseLock();
+      }
     } catch (error) {
       this.log(`Error sending packet: ${error.message}`);
       this.disconnect();
@@ -484,8 +491,10 @@ async function stop(message = "Server restarting") {
 
 (async function processStdin() {
   try {
-    for await (const line of readLines(Deno.stdin)) {
-      const [command, ...args] = line.split(" ");
+    for await (const line of Deno.stdin.readable) {
+      const [command, ...args] = decoder.decode(line).replace("\n", " ").split(
+        " ",
+      );
 
       switch (command) {
         default:
