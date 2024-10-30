@@ -1,6 +1,9 @@
 {
-  "deno.enable": true,
+  "deno.enable": false,
   "deno.unstable": true,
   "editor.formatOnSave": true,
   "editor.defaultFormatter": "denoland.vscode-deno",
+  "[go]": {
+    "editor.defaultFormatter": "golang.go"
+  }
 }
