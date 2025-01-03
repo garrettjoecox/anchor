@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -14,11 +15,13 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+const JSON_TEMPLATE = `{"gamesComplete":0}`
 const INACTIVITY_TIMEOUT = 48 * time.Hour
 const HEARTBEAT = 30 * time.Second
 
 type Server struct {
 	listener       net.Listener
+	quietMode      bool
 	onlineClients  map[uint64]*Client
 	rooms          map[string]*Room
 	gamesCompleted uint64
@@ -29,6 +32,7 @@ type Server struct {
 func NewServer() *Server {
 	return &Server{
 		onlineClients:  make(map[uint64]*Client),
+		quietMode:      true,
 		rooms:          make(map[string]*Room),
 		gamesCompleted: 0,
 		nextClientId:   1,
@@ -44,6 +48,7 @@ func (s *Server) Start() {
 
 	go s.cleanupInactiveRooms()
 	go s.heartbeat()
+	go s.parseStats()
 
 	fmt.Println("Server running on :43383")
 
@@ -55,6 +60,29 @@ func (s *Server) Start() {
 		}
 
 		go s.handleConnection(conn)
+	}
+}
+
+func (s *Server) parseStats() {
+	value, err := os.ReadFile("stats.json")
+	if err != nil {
+		fmt.Println("Error reading stats.json file:", err)
+	}
+
+	//input values into their repective fields of the server
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.gamesCompleted = uint64(gjson.Get(string(value), "gamesComplete").Int())
+}
+
+func (s *Server) saveStats() {
+	value, _ := sjson.Set(JSON_TEMPLATE, "gamesComplete", s.gamesCompleted)
+
+	err := os.WriteFile("./stats.json", []byte(value), 0644)
+
+	if err != nil {
+		fmt.Println("Error writing json to file: ", err)
 	}
 }
 
@@ -80,7 +108,9 @@ func (s *Server) heartbeat() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		fmt.Println("Clients Online & Threads Running", len(s.onlineClients), runtime.NumGoroutine())
+		if !s.quietMode {
+			fmt.Println("Clients Online & Threads Running", len(s.onlineClients), runtime.NumGoroutine())
+		}
 
 		s.mu.Lock()
 		for _, client := range s.onlineClients {

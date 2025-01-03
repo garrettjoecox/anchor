@@ -1,0 +1,6 @@
+services:
+  anchor:
+    image: ghcr.io/garrettjoecox/anchor:latest # remote contianer
+    #build: . # local dockerfile
+    ports:
+      - "43383:43383"
