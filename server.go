@@ -48,6 +48,7 @@ func (s *Server) Start() {
 
 	go s.cleanupInactiveRooms()
 	go s.heartbeat()
+	go s.statsHeartbeat()
 	go s.parseStats()
 
 	fmt.Println("Server running on :43383")
@@ -77,7 +78,7 @@ func (s *Server) parseStats() {
 }
 
 func (s *Server) saveStats() {
-	value, _ := sjson.Set(JSON_TEMPLATE, "gamesComplete", s.gamesCompleted)
+	value, _ := sjson.Set(JSON_TEMPLATE, "gamesComplete", s.gamesCompleted+1)
 
 	err := os.WriteFile("./stats.json", []byte(value), 0644)
 
@@ -99,6 +100,21 @@ func (s *Server) cleanupInactiveRooms() {
 				delete(s.rooms, id)
 			}
 		}
+		s.mu.Unlock()
+	}
+}
+
+func (s *Server) statsHeartbeat() {
+	ticker := time.NewTicker(25 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		if !s.quietMode {
+			fmt.Println("Clients Online & Threads Running", len(s.onlineClients), runtime.NumGoroutine())
+		}
+
+		s.mu.Lock()
+		s.saveStats()
 		s.mu.Unlock()
 	}
 }

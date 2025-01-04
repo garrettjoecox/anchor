@@ -21,6 +21,7 @@ func main() {
 		<-sigs
 		signal.Stop(sigs)
 		fmt.Println("Shutting down server...")
+		server.saveStats()
 		server.listener.Close()
 		os.Exit(0)
 	}()
@@ -152,10 +153,11 @@ func processStdin(s *Server) {
 			for _, client := range s.onlineClients {
 				go sendServerMessage(client, "Server restarting. Check back in a bit!")
 			}
-			s.saveStats()
 			s.mu.Unlock()
 
+			s.saveStats()
 			s.listener.Close()
+
 			os.Exit(0)
 		default:
 			fmt.Printf("Available commands:\nhelp: Show this help message\nstats: Print server stats\nquiet: Toggle quiet mode\nroomCount: Show the number of rooms\nclientCount: Show the number of clients\nlist: List all rooms and clients\nstop <message>: Stop the server\nmessage <clientId> <message>: Send a message to a client\nmessageAll <message>: Send a message to all clients\ndisable <clientId> <message>: Disable anchor on a client\ndisableAll <message>: Disable anchor on all clients\n")
