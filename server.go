@@ -15,7 +15,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const JSON_TEMPLATE = `{"gamesComplete":0}`
+const JSON_TEMPLATE = `{"gamesComplete":0,"onlineCount":0,"lastStatsHeartbeat":""}`
 const INACTIVITY_TIMEOUT = 48 * time.Hour
 const HEARTBEAT = 30 * time.Second
 
@@ -78,7 +78,10 @@ func (s *Server) parseStats() {
 }
 
 func (s *Server) saveStats() {
-	value, _ := sjson.Set(JSON_TEMPLATE, "gamesComplete", s.gamesCompleted+1)
+	//list of stats to save. Should all be in the JSON_TEMPLATE const
+	value, _ := sjson.Set(JSON_TEMPLATE, "gamesComplete", s.gamesCompleted)
+	value, _ = sjson.Set(value, "onlineCount", len(s.onlineClients))
+	value, _ = sjson.Set(value, "lastStatsHeartBeat", time.Now())
 
 	err := os.WriteFile("./stats.json", []byte(value), 0644)
 
@@ -109,10 +112,6 @@ func (s *Server) statsHeartbeat() {
 	defer ticker.Stop()
 
 	for range ticker.C {
-		if !s.quietMode {
-			fmt.Println("Clients Online & Threads Running", len(s.onlineClients), runtime.NumGoroutine())
-		}
-
 		s.mu.Lock()
 		s.saveStats()
 		s.mu.Unlock()
