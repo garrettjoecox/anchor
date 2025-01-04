@@ -57,6 +57,7 @@ func (s *Server) Start() {
 		conn, err := listener.Accept()
 		if err != nil {
 			log.Println("Error accepting connection:", err)
+			conn.Close()
 			continue
 		}
 
