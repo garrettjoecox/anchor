@@ -212,8 +212,9 @@ func (s *Server) findOrCreateClient(packet string, conn net.Conn) *Client {
 	// if client id is 0, the client is new and we need to assign a new id
 	if clientId == 0 {
 		clientId = s.nextClientId
+		s.nextClientId++
 		//ensure clientId is never set to 0 if an overflow happens
-		for s.nextClientId != 0 {
+		if s.nextClientId == 0 {
 			s.nextClientId++
 		}
 	}
@@ -224,8 +225,9 @@ func (s *Server) findOrCreateClient(packet string, conn net.Conn) *Client {
 			break
 		}
 		clientId = s.nextClientId
+		s.nextClientId++
 		//ensure clientId is never set to 0 if an overflow happens
-		for s.nextClientId != 0 {
+		if s.nextClientId == 0 {
 			s.nextClientId++
 		}
 	}
