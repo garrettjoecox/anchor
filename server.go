@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"log"
 	"net"
@@ -56,6 +57,10 @@ func (s *Server) Start() {
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				log.Println("Error with listener:", err)
+				break
+			}
 			log.Println("Error accepting connection:", err)
 			conn.Close()
 			continue
@@ -178,6 +183,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			}
 
 			client = s.findOrCreateClient(packet, conn)
+			fmt.Printf("Client %v Connected\n", client.id)
 			client.room.broadcastAllClientState()
 			client.sendRoomState()
 		} else {
@@ -191,9 +197,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		log.Printf("Client disconnected with error: %v", err)
+		log.Printf("Client %v disconnected with error: %v", client.id, err)
 	} else {
-		fmt.Println("Client disconnected")
+		fmt.Printf("Client %v disconnected\n", client.id)
 	}
 }
 
@@ -206,7 +212,10 @@ func (s *Server) findOrCreateClient(packet string, conn net.Conn) *Client {
 	// if client id is 0, the client is new and we need to assign a new id
 	if clientId == 0 {
 		clientId = s.nextClientId
-		s.nextClientId++
+		//ensure clientId is never set to 0 if an overflow happens
+		for s.nextClientId != 0 {
+			s.nextClientId++
+		}
 	}
 
 	// Check if the client id is already in use and look for a new one
@@ -215,7 +224,10 @@ func (s *Server) findOrCreateClient(packet string, conn net.Conn) *Client {
 			break
 		}
 		clientId = s.nextClientId
-		s.nextClientId++
+		//ensure clientId is never set to 0 if an overflow happens
+		for s.nextClientId != 0 {
+			s.nextClientId++
+		}
 	}
 
 	room := s.findOrCreateRoom(packet, clientId)

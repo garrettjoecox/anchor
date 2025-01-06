@@ -148,6 +148,16 @@ func processStdin(s *Server) {
 				go sendServerMessage(client, getMessage(splitInput[1:]))
 			}
 			s.mu.Unlock()
+		case "deleteRoom":
+			targetRoomID := splitInput[1]
+			s.rooms[targetRoomID].mu.Lock()
+			for _, client := range s.onlineClients {
+				if client.room.id == targetRoomID {
+					go sendDisable(client, "Deleting your room. Goodbye!")
+				}
+			}
+			s.rooms[targetRoomID].mu.Unlock()
+			delete(s.rooms, targetRoomID)
 		case "stop":
 			s.mu.Lock()
 			for _, client := range s.onlineClients {
@@ -160,7 +170,7 @@ func processStdin(s *Server) {
 
 			os.Exit(0)
 		default:
-			fmt.Printf("Available commands:\nhelp: Show this help message\nstats: Print server stats\nquiet: Toggle quiet mode\nroomCount: Show the number of rooms\nclientCount: Show the number of clients\nlist: List all rooms and clients\nstop <message>: Stop the server\nmessage <clientId> <message>: Send a message to a client\nmessageAll <message>: Send a message to all clients\ndisable <clientId> <message>: Disable anchor on a client\ndisableAll <message>: Disable anchor on all clients\n")
+			fmt.Printf("Available commands:\nhelp: Show this help message\nstats: Print server stats\nquiet: Toggle quiet mode\nroomCount: Show the number of rooms\nclientCount: Show the number of clients\nlist: List all rooms and clients\nstop <message>: Stop the server\nmessage <clientId> <message>: Send a message to a client\nmessageAll <message>: Send a message to all clients\ndisable <clientId> <message>: Disable anchor on a client\ndisableAll <message>: Disable anchor on all clients\ndeleteRoom <roomID>: Disables anchor on all online clients in the room and deletes it\n")
 		}
 	}
 }
