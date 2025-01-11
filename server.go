@@ -16,8 +16,8 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const JSON_TEMPLATE = `{"gamesComplete":0,"onlineCount":0,"lastStatsHeartbeat":""}`
-const INACTIVITY_TIMEOUT = 48 * time.Hour
+const JSON_TEMPLATE = `{"gamesComplete":0,"onlineCount":0,"lastStatsHeartbeat":"","nextClientId":0}`
+const INACTIVITY_TIMEOUT = 5 * time.Minute
 const HEARTBEAT = 30 * time.Second
 
 type Server struct {
@@ -33,24 +33,24 @@ type Server struct {
 func NewServer() *Server {
 	return &Server{
 		onlineClients:  make(map[uint64]*Client),
-		quietMode:      true,
+		quietMode:      false,
 		rooms:          make(map[string]*Room),
 		gamesCompleted: 0,
 		nextClientId:   1,
 	}
 }
 
-func (s *Server) Start() {
+func (s *Server) Start(errChan chan error) {
 	listener, err := net.Listen("tcp", ":43383")
 	if err != nil {
 		log.Fatal(err)
 	}
 	s.listener = listener
 
-	go s.cleanupInactiveRooms()
-	go s.heartbeat()
-	go s.statsHeartbeat()
-	go s.parseStats()
+	go s.cleanupInactiveRooms(errChan)
+	go s.heartbeat(errChan)
+	go s.statsHeartbeat(errChan)
+	go s.parseStats(errChan)
 
 	fmt.Println("Server running on :43383")
 
@@ -66,11 +66,17 @@ func (s *Server) Start() {
 			continue
 		}
 
-		go s.handleConnection(conn)
+		go s.handleConnection(conn, errChan)
 	}
 }
 
-func (s *Server) parseStats() {
+func (s *Server) parseStats(errChan chan error) {
+	defer func() {
+		if r := recover(); r != nil {
+			errChan <- fmt.Errorf("panic in parseStats: %v", r)
+		}
+	}()
+
 	value, err := os.ReadFile("stats.json")
 	if err != nil {
 		fmt.Println("Error reading stats.json file:", err)
@@ -81,11 +87,13 @@ func (s *Server) parseStats() {
 	defer s.mu.Unlock()
 
 	s.gamesCompleted = uint64(gjson.Get(string(value), "gamesComplete").Int())
+	s.nextClientId = uint64(gjson.Get(string(value), "nextClientId").Int())
 }
 
 func (s *Server) saveStats() {
 	//list of stats to save. Should all be in the JSON_TEMPLATE const
 	value, _ := sjson.Set(JSON_TEMPLATE, "gamesComplete", s.gamesCompleted)
+	value, _ = sjson.Set(value, "nextClientId", s.nextClientId)
 	value, _ = sjson.Set(value, "onlineCount", len(s.onlineClients))
 	value, _ = sjson.Set(value, "lastStatsHeartBeat", time.Now())
 
@@ -96,9 +104,14 @@ func (s *Server) saveStats() {
 	}
 }
 
-func (s *Server) cleanupInactiveRooms() {
+func (s *Server) cleanupInactiveRooms(errChan chan error) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	defer func() {
+		if r := recover(); r != nil {
+			errChan <- fmt.Errorf("panic in cleanupInactiveRooms: %v", r)
+		}
+	}()
 
 	for range ticker.C {
 		s.mu.Lock()
@@ -113,9 +126,14 @@ func (s *Server) cleanupInactiveRooms() {
 	}
 }
 
-func (s *Server) statsHeartbeat() {
+func (s *Server) statsHeartbeat(errChan chan error) {
 	ticker := time.NewTicker(25 * time.Second)
 	defer ticker.Stop()
+	defer func() {
+		if r := recover(); r != nil {
+			errChan <- fmt.Errorf("panic in statsHeartbeat: %v", r)
+		}
+	}()
 
 	for range ticker.C {
 		s.mu.Lock()
@@ -124,9 +142,14 @@ func (s *Server) statsHeartbeat() {
 	}
 }
 
-func (s *Server) heartbeat() {
+func (s *Server) heartbeat(errChan chan error) {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
+	defer func() {
+		if r := recover(); r != nil {
+			errChan <- fmt.Errorf("panic in heartbeat: %v", r)
+		}
+	}()
 
 	for range ticker.C {
 		if !s.quietMode {
@@ -143,8 +166,13 @@ func (s *Server) heartbeat() {
 	}
 }
 
-func (s *Server) handleConnection(conn net.Conn) {
+func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 	defer conn.Close()
+	defer func() {
+		if r := recover(); r != nil {
+			errChan <- fmt.Errorf("panic in handleConnection: %v", r)
+		}
+	}()
 
 	scanner := bufio.NewScanner(conn)
 	scanner.Split(splitNullByte)
@@ -240,10 +268,12 @@ func (s *Server) findOrCreateClient(packet string, conn net.Conn) *Client {
 	client, ok := room.clients[clientId]
 	clientState, _ := sjson.Set(gjson.Get(packet, "clientState").Raw, "clientId", clientId)
 	if ok {
+		client.mu.Lock()
 		client.conn = conn
 		client.state = clientState
 		client.team = team
 		client.lastActivity = time.Now()
+		client.mu.Unlock()
 	} else {
 		client = &Client{
 			id:           clientId,

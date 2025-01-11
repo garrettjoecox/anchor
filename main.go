@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"log"
 	"os"
 	"os/signal"
 	"strconv"
@@ -14,21 +15,32 @@ import (
 func main() {
 	server := NewServer()
 
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGINT, syscall.SIGTERM)
+	errChan := make(chan error)
+	sigsCa := make(chan os.Signal, 1)
+	signal.Notify(sigsCa, syscall.SIGINT, syscall.SIGTERM)
 
 	go func() {
-		<-sigs
-		signal.Stop(sigs)
+		<-sigsCa
+		signal.Stop(sigsCa)
 		fmt.Println("Shutting down server...")
 		server.saveStats()
 		server.listener.Close()
 		os.Exit(0)
 	}()
 
+	go func() {
+		// Shut down server on first error
+		if err := <-errChan; err != nil {
+			log.Printf("Server shutting down due to error: %v", err)
+			server.saveStats()
+			server.listener.Close()
+			os.Exit(1) // Exit the program
+		}
+	}()
+
 	go processStdin(server)
 
-	server.Start()
+	server.Start(errChan)
 }
 
 func getMessage(input []string) string {

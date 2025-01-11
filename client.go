@@ -65,9 +65,11 @@ func (c *Client) handlePacket(packet string) {
 		teamMemberOnline := false
 		c.room.mu.Lock()
 		for _, client := range c.room.clients {
+			client.mu.Lock()
 			if client.id != c.id && client.conn != nil && client.team == team && gjson.Get(client.state, "isSaveLoaded").Bool() {
 				teamMemberOnline = true
 			}
+			client.mu.Unlock()
 		}
 		c.room.mu.Unlock()
 

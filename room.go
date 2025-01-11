@@ -47,10 +47,10 @@ func (r *Room) findOrCreateTeam(teamId string) *Team {
 }
 
 func (r *Room) broadcastPacket(packet string) {
+	clientId := gjson.Get(packet, "clientId").Uint()
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	clientId := gjson.Get(packet, "clientId").Uint()
 
 	for _, client := range r.clients {
 		if client.conn == nil || client.id == clientId {
@@ -62,10 +62,10 @@ func (r *Room) broadcastPacket(packet string) {
 }
 
 func (r *Room) broadcastPacketToTeam(packet string, team *Team) {
+	clientId := gjson.Get(packet, "clientId").Uint()
+
 	r.mu.Lock()
 	defer r.mu.Unlock()
-
-	clientId := gjson.Get(packet, "clientId").Uint()
 
 	for _, client := range r.clients {
 		if client.conn == nil || client.id == clientId || client.team != team {
