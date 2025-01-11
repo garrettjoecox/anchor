@@ -40,7 +40,9 @@ func (c *Client) handlePacket(packet string) {
 	}
 
 	if packetType == "GAME_COMPLETE" {
+		c.server.mu.Lock()
 		c.server.gamesCompleted++
+		c.server.mu.Unlock()
 	}
 
 	targetClientId := gjson.Get(packet, "targetClientId")

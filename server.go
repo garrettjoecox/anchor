@@ -3,9 +3,11 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"log"
 	"net"
+	"os"
 	"runtime"
 	"sync"
 	"time"
@@ -14,11 +16,13 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+const JSON_TEMPLATE = `{"gamesComplete":0,"onlineCount":0,"lastStatsHeartbeat":""}`
 const INACTIVITY_TIMEOUT = 48 * time.Hour
 const HEARTBEAT = 30 * time.Second
 
 type Server struct {
 	listener       net.Listener
+	quietMode      bool
 	onlineClients  map[uint64]*Client
 	rooms          map[string]*Room
 	gamesCompleted uint64
@@ -29,6 +33,7 @@ type Server struct {
 func NewServer() *Server {
 	return &Server{
 		onlineClients:  make(map[uint64]*Client),
+		quietMode:      true,
 		rooms:          make(map[string]*Room),
 		gamesCompleted: 0,
 		nextClientId:   1,
@@ -44,17 +49,50 @@ func (s *Server) Start() {
 
 	go s.cleanupInactiveRooms()
 	go s.heartbeat()
+	go s.statsHeartbeat()
+	go s.parseStats()
 
 	fmt.Println("Server running on :43383")
 
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				log.Println("Error with listener:", err)
+				break
+			}
 			log.Println("Error accepting connection:", err)
+			conn.Close()
 			continue
 		}
 
 		go s.handleConnection(conn)
+	}
+}
+
+func (s *Server) parseStats() {
+	value, err := os.ReadFile("stats.json")
+	if err != nil {
+		fmt.Println("Error reading stats.json file:", err)
+	}
+
+	//input values into their repective fields of the server
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.gamesCompleted = uint64(gjson.Get(string(value), "gamesComplete").Int())
+}
+
+func (s *Server) saveStats() {
+	//list of stats to save. Should all be in the JSON_TEMPLATE const
+	value, _ := sjson.Set(JSON_TEMPLATE, "gamesComplete", s.gamesCompleted)
+	value, _ = sjson.Set(value, "onlineCount", len(s.onlineClients))
+	value, _ = sjson.Set(value, "lastStatsHeartBeat", time.Now())
+
+	err := os.WriteFile("./stats.json", []byte(value), 0644)
+
+	if err != nil {
+		fmt.Println("Error writing json to file: ", err)
 	}
 }
 
@@ -75,12 +113,25 @@ func (s *Server) cleanupInactiveRooms() {
 	}
 }
 
+func (s *Server) statsHeartbeat() {
+	ticker := time.NewTicker(25 * time.Second)
+	defer ticker.Stop()
+
+	for range ticker.C {
+		s.mu.Lock()
+		s.saveStats()
+		s.mu.Unlock()
+	}
+}
+
 func (s *Server) heartbeat() {
 	ticker := time.NewTicker(5 * time.Second)
 	defer ticker.Stop()
 
 	for range ticker.C {
-		fmt.Println("Clients Online & Threads Running", len(s.onlineClients), runtime.NumGoroutine())
+		if !s.quietMode {
+			fmt.Println("Clients Online & Threads Running", len(s.onlineClients), runtime.NumGoroutine())
+		}
 
 		s.mu.Lock()
 		for _, client := range s.onlineClients {
@@ -132,6 +183,7 @@ func (s *Server) handleConnection(conn net.Conn) {
 			}
 
 			client = s.findOrCreateClient(packet, conn)
+			fmt.Printf("Client %v Connected\n", client.id)
 			client.room.broadcastAllClientState()
 			client.sendRoomState()
 		} else {
@@ -145,9 +197,9 @@ func (s *Server) handleConnection(conn net.Conn) {
 	}
 
 	if err := scanner.Err(); err != nil {
-		log.Printf("Client disconnected with error: %v", err)
+		log.Printf("Client %v disconnected with error: %v", client.id, err)
 	} else {
-		fmt.Println("Client disconnected")
+		fmt.Printf("Client %v disconnected\n", client.id)
 	}
 }
 
@@ -161,6 +213,10 @@ func (s *Server) findOrCreateClient(packet string, conn net.Conn) *Client {
 	if clientId == 0 {
 		clientId = s.nextClientId
 		s.nextClientId++
+		//ensure clientId is never set to 0 if an overflow happens
+		if s.nextClientId == 0 {
+			s.nextClientId++
+		}
 	}
 
 	// Check if the client id is already in use and look for a new one
@@ -170,6 +226,10 @@ func (s *Server) findOrCreateClient(packet string, conn net.Conn) *Client {
 		}
 		clientId = s.nextClientId
 		s.nextClientId++
+		//ensure clientId is never set to 0 if an overflow happens
+		if s.nextClientId == 0 {
+			s.nextClientId++
+		}
 	}
 
 	room := s.findOrCreateRoom(packet, clientId)
