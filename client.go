@@ -1,7 +1,7 @@
 package main
 
 import (
-	"fmt"
+	"log"
 	"net"
 	"sync"
 	"time"
@@ -27,15 +27,19 @@ func (c *Client) handlePacket(packet string) {
 	packetType := gjson.Get(packet, "type").String()
 
 	if !gjson.Get(packet, "quiet").Exists() {
-		fmt.Printf("Client %d -> Server: %s\n", c.id, packetType)
+		log.Printf("Client %d -> Server: %s\n", c.id, packetType)
 	}
 
 	if packetType == "UPDATE_CLIENT_STATE" {
 		c.mu.Lock()
 		c.state = gjson.Get(packet, "state").Raw
 		c.state, _ = sjson.Set(c.state, "clientId", c.id)
-		teamId := gjson.Get(packet, "state.teamId").String()
-		c.team = c.room.findOrCreateTeam(teamId)
+		c.mu.Unlock()
+
+		team := c.room.findOrCreateTeam(gjson.Get(packet, "state.teamId").String())
+
+		c.mu.Lock()
+		c.team = team
 		c.mu.Unlock()
 	}
 
@@ -48,9 +52,11 @@ func (c *Client) handlePacket(packet string) {
 	targetClientId := gjson.Get(packet, "targetClientId")
 
 	if targetClientId.Exists() {
+		c.room.mu.Lock()
 		if targetClient, ok := c.room.clients[targetClientId.Uint()]; ok {
 			targetClient.sendPacket(packet)
 		}
+		c.room.mu.Unlock()
 		return
 	}
 
@@ -137,7 +143,7 @@ func (c *Client) sendPacket(packet string) {
 	}
 
 	if !gjson.Get(packet, "quiet").Exists() {
-		fmt.Printf("Client %d <- Server: %s\n", c.id, gjson.Get(packet, "type").String())
+		log.Printf("Client %d <- Server: %s\n", c.id, gjson.Get(packet, "type").String())
 	}
 
 	_, err := c.conn.Write(append([]byte(packet), 0))

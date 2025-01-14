@@ -52,7 +52,7 @@ func (s *Server) Start(errChan chan error) {
 	go s.statsHeartbeat(errChan)
 	go s.parseStats(errChan)
 
-	fmt.Println("Server running on :43383")
+	log.Println("Server running on :43383")
 
 	for {
 		conn, err := listener.Accept()
@@ -79,7 +79,7 @@ func (s *Server) parseStats(errChan chan error) {
 
 	value, err := os.ReadFile("stats.json")
 	if err != nil {
-		fmt.Println("Error reading stats.json file:", err)
+		log.Println("Error reading stats.json file:", err)
 	}
 
 	//input values into their repective fields of the server
@@ -91,16 +91,18 @@ func (s *Server) parseStats(errChan chan error) {
 }
 
 func (s *Server) saveStats() {
+	s.mu.Lock()
 	//list of stats to save. Should all be in the JSON_TEMPLATE const
 	value, _ := sjson.Set(JSON_TEMPLATE, "gamesComplete", s.gamesCompleted)
 	value, _ = sjson.Set(value, "nextClientId", s.nextClientId)
 	value, _ = sjson.Set(value, "onlineCount", len(s.onlineClients))
 	value, _ = sjson.Set(value, "lastStatsHeartBeat", time.Now())
+	s.mu.Unlock()
 
 	err := os.WriteFile("./stats.json", []byte(value), 0644)
 
 	if err != nil {
-		fmt.Println("Error writing json to file: ", err)
+		log.Println("Error writing json to file: ", err)
 	}
 }
 
@@ -118,7 +120,7 @@ func (s *Server) cleanupInactiveRooms(errChan chan error) {
 		for id, room := range s.rooms {
 			lastActivity := room.GetLastActivity()
 			if time.Since(lastActivity) > INACTIVITY_TIMEOUT {
-				fmt.Println("Room", id, "has been inactive for too long, deleting it")
+				log.Println("Room", id, "has been inactive for too long, deleting it")
 				delete(s.rooms, id)
 			}
 		}
@@ -136,9 +138,7 @@ func (s *Server) statsHeartbeat(errChan chan error) {
 	}()
 
 	for range ticker.C {
-		s.mu.Lock()
 		s.saveStats()
-		s.mu.Unlock()
 	}
 }
 
@@ -153,14 +153,16 @@ func (s *Server) heartbeat(errChan chan error) {
 
 	for range ticker.C {
 		if !s.quietMode {
-			fmt.Println("Clients Online & Threads Running", len(s.onlineClients), runtime.NumGoroutine())
+			log.Println("Clients Online & Threads Running", len(s.onlineClients), runtime.NumGoroutine())
 		}
 
 		s.mu.Lock()
 		for _, client := range s.onlineClients {
+			client.mu.Lock()
 			if time.Since(client.lastActivity) > HEARTBEAT {
 				client.sendPacket(`{"type":"HEARTBEAT","quiet":true}`)
 			}
+			client.mu.Unlock()
 		}
 		s.mu.Unlock()
 	}
@@ -183,13 +185,13 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 		packet := scanner.Text()
 
 		if !gjson.Valid(packet) {
-			fmt.Println("Invalid JSON packet")
+			log.Println("Invalid JSON packet")
 			continue
 		}
 
 		packetTypeWrapped := gjson.Get(packet, "type")
 		if !packetTypeWrapped.Exists() {
-			fmt.Println("Packet missing type")
+			log.Println("Packet missing type")
 			continue
 		}
 
@@ -206,12 +208,12 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 
 		if client == nil {
 			if packetType != "HANDSHAKE" {
-				fmt.Println("Client must handshake first")
+				log.Println("Client must handshake first")
 				continue
 			}
 
 			client = s.findOrCreateClient(packet, conn)
-			fmt.Printf("Client %v Connected\n", client.id)
+			log.Printf("Client %v Connected\n", client.id)
 			client.room.broadcastAllClientState()
 			client.sendRoomState()
 		} else {
@@ -222,21 +224,22 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 	if client != nil {
 		client.disconnect()
 		client.room.broadcastAllClientState()
+
+		if err := scanner.Err(); err != nil {
+			log.Printf("Client %v disconnected with error: %v", client.id, err)
+		} else {
+			log.Printf("Client %v disconnected\n", client.id)
+		}
+	} else {
+		log.Println("Unknown client disconnected.")
 	}
 
-	if err := scanner.Err(); err != nil {
-		log.Printf("Client %v disconnected with error: %v", client.id, err)
-	} else {
-		fmt.Printf("Client %v disconnected\n", client.id)
-	}
 }
 
 func (s *Server) findOrCreateClient(packet string, conn net.Conn) *Client {
 	clientId := gjson.Get(packet, "clientId").Uint()
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	// if client id is 0, the client is new and we need to assign a new id
 	if clientId == 0 {
 		clientId = s.nextClientId
@@ -259,12 +262,13 @@ func (s *Server) findOrCreateClient(packet string, conn net.Conn) *Client {
 			s.nextClientId++
 		}
 	}
+	s.mu.Unlock()
 
 	room := s.findOrCreateRoom(packet, clientId)
 	team := room.findOrCreateTeam(gjson.Get(packet, "clientState.teamId").String())
 
 	room.mu.Lock()
-	defer room.mu.Unlock()
+
 	client, ok := room.clients[clientId]
 	clientState, _ := sjson.Set(gjson.Get(packet, "clientState").Raw, "clientId", clientId)
 	if ok {
@@ -286,8 +290,11 @@ func (s *Server) findOrCreateClient(packet string, conn net.Conn) *Client {
 		}
 		room.clients[clientId] = client
 	}
+	room.mu.Unlock()
 
+	s.mu.Lock()
 	s.onlineClients[clientId] = client
+	s.mu.Unlock()
 
 	return client
 }
@@ -295,11 +302,13 @@ func (s *Server) findOrCreateClient(packet string, conn net.Conn) *Client {
 func (s *Server) findOrCreateRoom(packet string, clientId uint64) *Room {
 	roomId := gjson.Get(packet, "roomId").String()
 
+	s.mu.Lock()
 	room, ok := s.rooms[roomId]
 	if !ok {
 		room = NewRoom(roomId, clientId, packet)
 		s.rooms[roomId] = room
 	}
+	s.mu.Unlock()
 
 	return room
 }
