@@ -185,7 +185,7 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 		packet := scanner.Text()
 
 		if !gjson.Valid(packet) {
-			log.Println("Invalid JSON packet")
+			log.Printf("Invalid JSON packet: %s\n", packet)
 			continue
 		}
 
