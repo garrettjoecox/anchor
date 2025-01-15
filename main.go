@@ -22,7 +22,7 @@ func main() {
 	go func() {
 		<-sigsCa
 		signal.Stop(sigsCa)
-		fmt.Println("Shutting down server...")
+		log.Println("Shutting down server...")
 		server.saveStats()
 		server.listener.Close()
 		os.Exit(0)
@@ -73,7 +73,7 @@ func sendServerMessage(client *Client, message string) {
 func getClientID(clientID string) uint64 {
 	converted, err := strconv.ParseUint(clientID, 10, 64)
 	if err != nil {
-		fmt.Println("Given text was not a valid clientID.")
+		log.Println("Given text was not a valid clientID.")
 		return 0
 	}
 
@@ -86,7 +86,7 @@ func processStdin(s *Server) {
 		input, err := reader.ReadString('\n')
 
 		if err != nil {
-			fmt.Println("Error reading from stdin:", err)
+			log.Println("Error reading from stdin:", err)
 			continue
 		}
 
@@ -98,78 +98,111 @@ func processStdin(s *Server) {
 
 		switch splitInput[0] {
 		case "roomCount":
-			fmt.Println("Room count: ", len(s.rooms))
+			s.mu.Lock()
+			log.Println("Room count:", len(s.rooms))
+			s.mu.Unlock()
 		case "clientCount":
-			fmt.Println("Client count:", len(s.onlineClients))
+			s.mu.Lock()
+			log.Println("Client count:", len(s.onlineClients))
+			s.mu.Unlock()
 		case "quiet":
+			s.mu.Lock()
 			s.quietMode = !s.quietMode
-			fmt.Println("Quiet mode: ", s.quietMode)
+			log.Println("Quiet mode:", s.quietMode)
+			s.mu.Unlock()
 		case "stats":
 			s.mu.Lock()
-			fmt.Println("Current Stats:")
-			fmt.Println("    Online Count: " + strconv.FormatInt(int64(len(s.onlineClients)), 10))
-			fmt.Println("    Games Complete: " + strconv.FormatInt(int64(s.gamesCompleted), 10))
+			log.Println("Online Count:", strconv.FormatInt(int64(len(s.onlineClients)), 10), "| Games Complete: "+strconv.FormatInt(int64(s.gamesCompleted), 10))
 			s.mu.Unlock()
 		case "list":
+			s.mu.Lock()
 			for _, room := range s.rooms {
-				fmt.Println("Room", room.id+":")
+				room.mu.Lock()
+				log.SetFlags(0)
+				log.Println("Room", room.id+":")
 				for _, client := range room.clients {
-					fmt.Println("  Client", fmt.Sprint(client.id)+":", client.state)
+					client.mu.Lock()
+					log.Println("  Client", fmt.Sprint(client.id)+":", client.state)
+					client.mu.Unlock()
 				}
+				log.SetFlags(log.LstdFlags)
+				room.mu.Unlock()
 			}
+			s.mu.Unlock()
 		case "disable":
 			targetClientId := getClientID(splitInput[1])
 			if targetClientId == 0 {
 				continue
 			}
 
+			s.mu.Lock()
 			client := s.onlineClients[targetClientId]
+			s.mu.Unlock()
 
 			if client != nil {
-				fmt.Println("[Server] DISABLE_ANCHOR packet ->", client.id)
+				client.mu.Unlock()
+				log.Println("[Server] DISABLE_ANCHOR packet ->", client.id)
+				client.mu.Unlock()
 				go sendDisable(client, getMessage(splitInput[2:]))
 				continue
 			}
 
-			fmt.Println("Client", targetClientId, "not found")
+			log.Println("Client", targetClientId, "not found")
 		case "disableAll":
-			fmt.Println("[Server] DISABLE_ANCHOR packet -> All")
-			for i := range s.onlineClients {
-				client := s.onlineClients[i]
+			log.Println("[Server] DISABLE_ANCHOR packet -> All")
+			s.mu.Lock()
+			for _, client := range s.onlineClients {
 				go sendDisable(client, getMessage(splitInput[1:]))
 			}
+			s.mu.Unlock()
 		case "message":
 			targetClientId := getClientID(splitInput[1])
 			if targetClientId == 0 {
 				continue
 			}
 
+			s.mu.Lock()
 			client := s.onlineClients[targetClientId]
+			s.mu.Unlock()
 
 			if client != nil {
-				fmt.Println("[Server] SERVER_MESSAGE packet ->", client.id)
+				client.mu.Lock()
+				log.Println("[Server] SERVER_MESSAGE packet ->", client.id)
+				client.mu.Unlock()
 				go sendServerMessage(client, getMessage(splitInput[2:]))
 				continue
 			}
 
-			fmt.Println("Client", targetClientId, "not found")
+			log.Println("Client", targetClientId, "not found")
 		case "messageAll":
-			fmt.Println("[Server] SERVER_MESSAGE packet -> All")
+			log.Println("[Server] SERVER_MESSAGE packet -> All")
 			s.mu.Lock()
 			for _, client := range s.onlineClients {
 				go sendServerMessage(client, getMessage(splitInput[1:]))
 			}
 			s.mu.Unlock()
 		case "deleteRoom":
+			s.mu.Lock()
 			targetRoomID := splitInput[1]
-			s.rooms[targetRoomID].mu.Lock()
-			for _, client := range s.onlineClients {
-				if client.room.id == targetRoomID {
-					go sendDisable(client, "Deleting your room. Goodbye!")
+
+			room := s.rooms[targetRoomID]
+
+			if room != nil {
+				room.mu.Lock()
+				for _, client := range s.onlineClients {
+					client.mu.Lock()
+					if client.room.id == targetRoomID {
+						go sendDisable(client, "Deleting your room. Goodbye!")
+					}
+					client.mu.Unlock()
 				}
+				room.mu.Unlock()
+				delete(s.rooms, targetRoomID)
+			} else {
+				log.Println("Client", targetRoomID, "not found")
 			}
-			s.rooms[targetRoomID].mu.Unlock()
-			delete(s.rooms, targetRoomID)
+
+			s.mu.Unlock()
 		case "stop":
 			s.mu.Lock()
 			for _, client := range s.onlineClients {
@@ -182,7 +215,7 @@ func processStdin(s *Server) {
 
 			os.Exit(0)
 		default:
-			fmt.Printf("Available commands:\nhelp: Show this help message\nstats: Print server stats\nquiet: Toggle quiet mode\nroomCount: Show the number of rooms\nclientCount: Show the number of clients\nlist: List all rooms and clients\nstop <message>: Stop the server\nmessage <clientId> <message>: Send a message to a client\nmessageAll <message>: Send a message to all clients\ndisable <clientId> <message>: Disable anchor on a client\ndisableAll <message>: Disable anchor on all clients\ndeleteRoom <roomID>: Disables anchor on all online clients in the room and deletes it\n")
+			log.Printf("Available commands:\nhelp: Show this help message\nstats: Print server stats\nquiet: Toggle quiet mode\nroomCount: Show the number of rooms\nclientCount: Show the number of clients\nlist: List all rooms and clients\nstop <message>: Stop the server\nmessage <clientId> <message>: Send a message to a client\nmessageAll <message>: Send a message to all clients\ndisable <clientId> <message>: Disable anchor on a client\ndisableAll <message>: Disable anchor on all clients\ndeleteRoom <roomID>: Disables anchor on all online clients in the room and deletes it\n")
 		}
 	}
 }

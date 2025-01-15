@@ -61,21 +61,6 @@ func (r *Room) broadcastPacket(packet string) {
 	}
 }
 
-func (r *Room) broadcastPacketToTeam(packet string, team *Team) {
-	clientId := gjson.Get(packet, "clientId").Uint()
-
-	r.mu.Lock()
-	defer r.mu.Unlock()
-
-	for _, client := range r.clients {
-		if client.conn == nil || client.id == clientId || client.team != team {
-			continue
-		}
-
-		client.sendPacket(packet)
-	}
-}
-
 func (r *Room) broadcastAllClientState() {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -86,8 +71,8 @@ func (r *Room) broadcastAllClientState() {
 	index := 0
 
 	for id, client := range r.clients {
-		client.mu.Lock()
 		idToIndex[id] = index
+		client.mu.Lock()
 		packet, _ = sjson.SetRaw(packet, "state."+fmt.Sprint(index), client.state)
 		client.mu.Unlock()
 		index++
@@ -113,9 +98,11 @@ func (r *Room) GetLastActivity() time.Time {
 	var lastActivity time.Time
 
 	for _, client := range r.clients {
+		client.mu.Lock()
 		if client.lastActivity.After(lastActivity) {
 			lastActivity = client.lastActivity
 		}
+		client.mu.Unlock()
 	}
 
 	return lastActivity
