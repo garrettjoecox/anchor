@@ -53,10 +53,11 @@ func (c *Client) handlePacket(packet string) {
 
 	if targetClientId.Exists() {
 		c.room.mu.Lock()
-		if targetClient, ok := c.room.clients[targetClientId.Uint()]; ok {
+		targetClient, ok := c.room.clients[targetClientId.Uint()]
+		c.room.mu.Unlock()
+		if ok {
 			targetClient.sendPacket(packet)
 		}
-		c.room.mu.Unlock()
 		return
 	}
 
@@ -88,8 +89,8 @@ func (c *Client) handlePacket(packet string) {
 		}
 
 		// Teammate is offline, see if we have a saved state for the team
-		team.mu.Lock()
 		outgoingPacket := `{"type": "UPDATE_TEAM_STATE"}`
+		team.mu.Lock()
 		if team.state != "{}" {
 			outgoingPacket, _ = sjson.SetRaw(outgoingPacket, "state", team.state)
 		}
@@ -104,6 +105,7 @@ func (c *Client) handlePacket(packet string) {
 
 		team := c.room.findOrCreateTeam(targetTeamId.String())
 
+		c.room.mu.Lock()
 		team.mu.Lock()
 		team.state = gjson.Get(packet, "state").Raw
 		team.queue = []string{}
@@ -116,6 +118,7 @@ func (c *Client) handlePacket(packet string) {
 
 		team.clientIdsRequestingState = []uint64{}
 		team.mu.Unlock()
+		c.room.mu.Unlock()
 	} else if packetType == "UPDATE_ROOM_STATE" {
 		c.room.mu.Lock()
 		c.room.state = gjson.Get(packet, "state").Raw

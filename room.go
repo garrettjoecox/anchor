@@ -71,8 +71,8 @@ func (r *Room) broadcastAllClientState() {
 	index := 0
 
 	for id, client := range r.clients {
-		client.mu.Lock()
 		idToIndex[id] = index
+		client.mu.Lock()
 		packet, _ = sjson.SetRaw(packet, "state."+fmt.Sprint(index), client.state)
 		client.mu.Unlock()
 		index++

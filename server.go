@@ -16,7 +16,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const JSON_TEMPLATE = `{"gamesComplete":0,"onlineCount":0,"lastStatsHeartbeat":"","nextClientId":0}`
+const JSON_TEMPLATE = `{"gamesComplete":0,"onlineCount":0,"lastStatsHeartbeat":"","nextClientId":1}`
 const INACTIVITY_TIMEOUT = 5 * time.Minute
 const HEARTBEAT = 30 * time.Second
 
@@ -49,8 +49,8 @@ func (s *Server) Start(errChan chan error) {
 
 	go s.cleanupInactiveRooms(errChan)
 	go s.heartbeat(errChan)
-	go s.statsHeartbeat(errChan)
 	go s.parseStats(errChan)
+	go s.statsHeartbeat(errChan)
 
 	log.Println("Server running on :43383")
 
@@ -96,7 +96,7 @@ func (s *Server) saveStats() {
 	value, _ := sjson.Set(JSON_TEMPLATE, "gamesComplete", s.gamesCompleted)
 	value, _ = sjson.Set(value, "nextClientId", s.nextClientId)
 	value, _ = sjson.Set(value, "onlineCount", len(s.onlineClients))
-	value, _ = sjson.Set(value, "lastStatsHeartBeat", time.Now())
+	value, _ = sjson.Set(value, "lastStatsHeartbeat", time.Now())
 	s.mu.Unlock()
 
 	err := os.WriteFile("./stats.json", []byte(value), 0644)
