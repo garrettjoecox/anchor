@@ -160,7 +160,7 @@ func (s *Server) heartbeat(errChan chan error) {
 		for _, client := range s.onlineClients {
 			client.mu.Lock()
 			if time.Since(client.lastActivity) > HEARTBEAT {
-				client.sendPacket(`{"type":"HEARTBEAT","quiet":true}`)
+				go client.sendPacket(`{"type":"HEARTBEAT","quiet":true}`)
 			}
 			client.mu.Unlock()
 		}

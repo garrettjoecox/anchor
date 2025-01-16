@@ -154,7 +154,9 @@ func (c *Client) sendPacket(packet string) {
 	if err != nil {
 		c.disconnect()
 	} else {
+		c.mu.Lock()
 		c.lastActivity = time.Now()
+		c.mu.Unlock()
 	}
 }
 
