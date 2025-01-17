@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime"
 	"strconv"
 	"strings"
 	"syscall"
@@ -23,6 +24,10 @@ func main() {
 		<-sigsCa
 		signal.Stop(sigsCa)
 		log.Println("Shutting down server...")
+		buf := make([]byte, 1<<20)
+		stacklen := runtime.Stack(buf, true)
+		log.Printf("=== Goroutine Dump ===\n%s\n=== End ===", buf[:stacklen])
+
 		server.saveStats()
 		server.listener.Close()
 		os.Exit(0)
