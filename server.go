@@ -20,32 +20,34 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const JSON_TEMPLATE = `{"gamesComplete":0,"onlineCount":0,"lastStatsHeartbeat":"","nextClientId":1,"banList":[],"clientSHAs":[]}`
+const JSON_TEMPLATE = `{"totalGamesComplete":0,"monthlyGamesComplete":0,"onlineCount":0,"lastStatsHeartbeat":"","nextClientId":1,"banList":[],"clientSHAs":[]}`
 const INACTIVITY_TIMEOUT = 5 * time.Minute
 const HEARTBEAT = 30 * time.Second
 const BANNABLE_INVALID_PACKET_LIMIT = 5
 
 type Server struct {
-	listener       net.Listener
-	quietMode      bool
-	onlineClients  map[uint64]*Client
-	rooms          map[string]*Room
-	gamesCompleted uint64
-	nextClientId   uint64
-	banList        []string
-	clientSHAs     []string
-	mu             sync.Mutex
+	listener             net.Listener
+	quietMode            bool
+	onlineClients        map[uint64]*Client
+	rooms                map[string]*Room
+	totalGamesComplete   uint64
+	monthlyGamesComplete uint64
+	nextClientId         uint64
+	banList              []string
+	clientSHAs           []string
+	mu                   sync.Mutex
 }
 
 func NewServer() *Server {
 	return &Server{
-		onlineClients:  make(map[uint64]*Client),
-		quietMode:      false,
-		rooms:          make(map[string]*Room),
-		gamesCompleted: 0,
-		nextClientId:   1,
-		banList:        make([]string, 0),
-		clientSHAs:     make([]string, 0),
+		onlineClients:        make(map[uint64]*Client),
+		quietMode:            false,
+		rooms:                make(map[string]*Room),
+		totalGamesComplete:   0,
+		monthlyGamesComplete: 0,
+		nextClientId:         1,
+		banList:              make([]string, 0),
+		clientSHAs:           make([]string, 0),
 	}
 }
 
@@ -110,7 +112,8 @@ func (s *Server) parseStats(errChan chan error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.gamesCompleted = uint64(gjson.Get(string(value), "gamesComplete").Int())
+	s.totalGamesComplete = uint64(gjson.Get(string(value), "totalGamesComplete").Int())
+	s.monthlyGamesComplete = uint64(gjson.Get(string(value), "monthlyGamesComplete").Int())
 	s.nextClientId = uint64(gjson.Get(string(value), "nextClientId").Int())
 
 	array := gjson.Parse(string(value)).Get("clientSHAs").Array()
@@ -128,7 +131,8 @@ func (s *Server) parseStats(errChan chan error) {
 func (s *Server) saveStats() {
 	s.mu.Lock()
 	//list of stats to save. Should all be in the JSON_TEMPLATE const
-	value, _ := sjson.Set(JSON_TEMPLATE, "gamesComplete", s.gamesCompleted)
+	value, _ := sjson.Set(JSON_TEMPLATE, "totalGamesComplete", s.totalGamesComplete)
+	value, _ = sjson.Set(value, "monthlyGamesComplete", s.monthlyGamesComplete)
 	value, _ = sjson.Set(value, "nextClientId", s.nextClientId)
 	value, _ = sjson.Set(value, "onlineCount", len(s.onlineClients))
 	value, _ = sjson.Set(value, "lastStatsHeartbeat", time.Now())
@@ -167,6 +171,8 @@ func (s *Server) cleanupInactiveRooms(errChan chan error) {
 
 func (s *Server) statsHeartbeat(errChan chan error) {
 	ticker := time.NewTicker(25 * time.Second)
+	currentMonth := time.Now().Month()
+
 	defer ticker.Stop()
 	defer func() {
 		if r := recover(); r != nil {
@@ -175,6 +181,20 @@ func (s *Server) statsHeartbeat(errChan chan error) {
 	}()
 
 	for range ticker.C {
+		//monthly refresh
+		if time.Now().Month() != currentMonth {
+			currentMonth = time.Now().Month()
+
+			s.mu.Lock()
+			s.monthlyGamesComplete = 0
+			s.clientSHAs = nil
+			for _, client := range s.onlineClients {
+				client.mu.Lock()
+				s.clientSHAs = append(s.clientSHAs, s.getSHA(client.conn))
+				client.mu.Unlock()
+			}
+			s.mu.Unlock()
+		}
 		s.saveStats()
 	}
 }
@@ -246,7 +266,8 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 		// Health check
 		if packetType == "STATS" {
 			outgoingPacket, _ := sjson.Set(`{"type":"STATS"}`, "uniquePlayers", s.nextClientId)
-			outgoingPacket, _ = sjson.Set(outgoingPacket, "gamesCompleted", s.gamesCompleted)
+			outgoingPacket, _ = sjson.Set(outgoingPacket, "totalGamesComplete", s.totalGamesComplete)
+			outgoingPacket, _ = sjson.Set(outgoingPacket, "monthlyGamesComplete", s.monthlyGamesComplete)
 			outgoingPacket, _ = sjson.Set(outgoingPacket, "online", len(s.onlineClients))
 			conn.Write(append([]byte(outgoingPacket), 0))
 			continue

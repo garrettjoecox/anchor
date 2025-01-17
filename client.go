@@ -45,7 +45,8 @@ func (c *Client) handlePacket(packet string) {
 
 	if packetType == "GAME_COMPLETE" {
 		c.server.mu.Lock()
-		c.server.gamesCompleted++
+		c.server.totalGamesComplete++
+		c.server.monthlyGamesComplete++
 		c.server.mu.Unlock()
 	}
 

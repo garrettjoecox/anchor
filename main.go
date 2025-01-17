@@ -75,14 +75,18 @@ func sendServerMessage(client *Client, message string) {
 	client.sendPacket(`{"type":"SERVER_MESSAGE","message":"` + message + `"}`)
 }
 
-func getClientID(clientID string) uint64 {
-	converted, err := strconv.ParseUint(clientID, 10, 64)
+func findOnlineClient(server *Server, targetClientID string) *Client {
+	converted, err := strconv.ParseUint(targetClientID, 10, 64)
 	if err != nil {
 		log.Println("Given text was not a valid clientID.")
-		return 0
+		return nil
 	}
 
-	return converted
+	server.mu.Lock()
+	client := server.onlineClients[converted]
+	server.mu.Unlock()
+
+	return client
 }
 
 func processStdin(s *Server) {
@@ -117,7 +121,7 @@ func processStdin(s *Server) {
 			s.mu.Unlock()
 		case "stats":
 			s.mu.Lock()
-			log.Println("Online Count:", strconv.FormatInt(int64(len(s.onlineClients)), 10), "| Games Complete: "+strconv.FormatInt(int64(s.gamesCompleted), 10))
+			log.Println("Online Count:", strconv.FormatInt(int64(len(s.onlineClients)), 10), "| Total Games Complete: "+strconv.FormatInt(int64(s.totalGamesComplete), 10), "| Monthly Games Complete: "+strconv.FormatInt(int64(s.monthlyGamesComplete), 10))
 			s.mu.Unlock()
 		case "list":
 			s.mu.Lock()
@@ -135,24 +139,17 @@ func processStdin(s *Server) {
 			}
 			s.mu.Unlock()
 		case "disable":
-			targetClientId := getClientID(splitInput[1])
-			if targetClientId == 0 {
-				continue
-			}
-
-			s.mu.Lock()
-			client := s.onlineClients[targetClientId]
-			s.mu.Unlock()
+			targetClientID := splitInput[1]
+			client := findOnlineClient(s, targetClientID)
 
 			if client != nil {
 				client.mu.Unlock()
 				log.Println("[Server] DISABLE_ANCHOR packet ->", client.id)
 				client.mu.Unlock()
 				go sendDisable(client, getMessage(splitInput[2:]))
-				continue
+			} else {
+				log.Println("Client", targetClientID, "not found")
 			}
-
-			log.Println("Client", targetClientId, "not found")
 		case "disableAll":
 			log.Println("[Server] DISABLE_ANCHOR packet -> All")
 			s.mu.Lock()
@@ -161,24 +158,17 @@ func processStdin(s *Server) {
 			}
 			s.mu.Unlock()
 		case "message":
-			targetClientId := getClientID(splitInput[1])
-			if targetClientId == 0 {
-				continue
-			}
-
-			s.mu.Lock()
-			client := s.onlineClients[targetClientId]
-			s.mu.Unlock()
+			targetClientID := splitInput[1]
+			client := findOnlineClient(s, targetClientID)
 
 			if client != nil {
 				client.mu.Lock()
 				log.Println("[Server] SERVER_MESSAGE packet ->", client.id)
 				client.mu.Unlock()
 				go sendServerMessage(client, getMessage(splitInput[2:]))
-				continue
+			} else {
+				log.Println("Client", targetClientID, "not found")
 			}
-
-			log.Println("Client", targetClientId, "not found")
 		case "messageAll":
 			log.Println("[Server] SERVER_MESSAGE packet -> All")
 			s.mu.Lock()
@@ -209,14 +199,8 @@ func processStdin(s *Server) {
 
 			s.mu.Unlock()
 		case "banClient":
-			targetClientId := getClientID(splitInput[1])
-			if targetClientId == 0 {
-				continue
-			}
-
-			s.mu.Lock()
-			client := s.onlineClients[targetClientId]
-			s.mu.Unlock()
+			targetClientID := splitInput[1]
+			client := findOnlineClient(s, targetClientID)
 
 			if client != nil {
 				go func() {
@@ -228,17 +212,11 @@ func processStdin(s *Server) {
 					s.handleBannedConnection(client.conn)
 				}()
 			} else {
-				log.Println("Client", targetClientId, "not found")
+				log.Println("Client", targetClientID, "not found")
 			}
 		case "getClientSHA":
-			targetClientId := getClientID(splitInput[1])
-			if targetClientId == 0 {
-				continue
-			}
-
-			s.mu.Lock()
-			client := s.onlineClients[targetClientId]
-			s.mu.Unlock()
+			targetClientID := splitInput[1]
+			client := findOnlineClient(s, targetClientID)
 
 			if client != nil {
 
@@ -250,7 +228,7 @@ func processStdin(s *Server) {
 				log.Println("Clients IP SHA: " + s.getSHA(conn))
 				log.SetFlags(log.LstdFlags)
 			} else {
-				log.Println("Client", targetClientId, "not found")
+				log.Println("Client", targetClientID, "not found")
 			}
 		case "banIP":
 			s.banIP(splitInput[1])
