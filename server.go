@@ -3,12 +3,16 @@ package main
 import (
 	"bufio"
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log"
 	"net"
 	"os"
 	"runtime"
+	"slices"
+	"strings"
 	"sync"
 	"time"
 
@@ -16,9 +20,10 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const JSON_TEMPLATE = `{"gamesComplete":0,"onlineCount":0,"lastStatsHeartbeat":"","nextClientId":1}`
+const JSON_TEMPLATE = `{"gamesComplete":0,"onlineCount":0,"lastStatsHeartbeat":"","nextClientId":1,"banList":[],"clientSHAs":[]}`
 const INACTIVITY_TIMEOUT = 5 * time.Minute
 const HEARTBEAT = 30 * time.Second
+const BANNABLE_INVALID_PACKET_LIMIT = 5
 
 type Server struct {
 	listener       net.Listener
@@ -27,6 +32,8 @@ type Server struct {
 	rooms          map[string]*Room
 	gamesCompleted uint64
 	nextClientId   uint64
+	banList        []string
+	clientSHAs     []string
 	mu             sync.Mutex
 }
 
@@ -37,6 +44,8 @@ func NewServer() *Server {
 		rooms:          make(map[string]*Room),
 		gamesCompleted: 0,
 		nextClientId:   1,
+		banList:        make([]string, 0),
+		clientSHAs:     make([]string, 0),
 	}
 }
 
@@ -49,7 +58,7 @@ func (s *Server) Start(errChan chan error) {
 
 	go s.cleanupInactiveRooms(errChan)
 	go s.heartbeat(errChan)
-	go s.parseStats(errChan)
+	s.parseStats(errChan)
 	go s.statsHeartbeat(errChan)
 
 	log.Println("Server running on :43383")
@@ -65,6 +74,21 @@ func (s *Server) Start(errChan chan error) {
 			conn.Close()
 			continue
 		}
+
+		ip := s.getSHA(conn)
+
+		s.mu.Lock()
+		//If they are banned stop here
+		if slices.Contains(s.banList, ip) {
+			s.handleBannedConnection(conn)
+			s.mu.Unlock()
+			continue
+		}
+
+		if !slices.Contains(s.clientSHAs, ip) {
+			s.clientSHAs = append(s.clientSHAs, ip)
+		}
+		s.mu.Unlock()
 
 		go s.handleConnection(conn, errChan)
 	}
@@ -88,6 +112,17 @@ func (s *Server) parseStats(errChan chan error) {
 
 	s.gamesCompleted = uint64(gjson.Get(string(value), "gamesComplete").Int())
 	s.nextClientId = uint64(gjson.Get(string(value), "nextClientId").Int())
+
+	array := gjson.Parse(string(value)).Get("clientSHAs").Array()
+	for _, value := range array {
+		s.clientSHAs = append(s.clientSHAs, value.Str)
+	}
+
+	array = gjson.Parse(string(value)).Get("banList").Array()
+	for _, value := range array {
+		s.banList = append(s.banList, value.Str)
+	}
+
 }
 
 func (s *Server) saveStats() {
@@ -97,6 +132,8 @@ func (s *Server) saveStats() {
 	value, _ = sjson.Set(value, "nextClientId", s.nextClientId)
 	value, _ = sjson.Set(value, "onlineCount", len(s.onlineClients))
 	value, _ = sjson.Set(value, "lastStatsHeartbeat", time.Now())
+	value, _ = sjson.Set(value, "clientSHAs", s.clientSHAs)
+	value, _ = sjson.Set(value, "banList", s.banList)
 	s.mu.Unlock()
 
 	err := os.WriteFile("./stats.json", []byte(value), 0644)
@@ -179,19 +216,28 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 	scanner := bufio.NewScanner(conn)
 	scanner.Split(splitNullByte)
 
+	invalidCount := 0
+
 	var client *Client
 
 	for scanner.Scan() {
+		//for those pesky bots out there ;)
+		if invalidCount >= BANNABLE_INVALID_PACKET_LIMIT {
+			s.banIP(strings.Split(conn.RemoteAddr().String(), ":")[0])
+			s.handleBannedConnection(conn)
+		}
 		packet := scanner.Text()
 
 		if !gjson.Valid(packet) {
 			log.Printf("Invalid JSON packet: %s\n", packet)
+			invalidCount++
 			continue
 		}
 
 		packetTypeWrapped := gjson.Get(packet, "type")
 		if !packetTypeWrapped.Exists() {
 			log.Println("Packet missing type")
+			invalidCount++
 			continue
 		}
 
@@ -217,6 +263,9 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 			client.room.broadcastAllClientState()
 			client.sendRoomState()
 		} else {
+			if invalidCount > 0 {
+				invalidCount = 0
+			}
 			client.handlePacket(packet)
 		}
 	}
@@ -321,4 +370,39 @@ func splitNullByte(data []byte, atEOF bool) (advance int, token []byte, err erro
 		return len(data), data, nil
 	}
 	return 0, nil, nil
+}
+
+func (s *Server) getSHA(conn net.Conn) string {
+	//SHA256
+	hash := sha256.Sum256([]byte(strings.Split(conn.RemoteAddr().String(), ":")[0]))
+	return hex.EncodeToString(hash[:])
+}
+
+func (s *Server) banIP(ip string) {
+	log.Println("Banning IP:" + ip)
+	s.mu.Lock()
+	s.banList = append(s.banList, ip)
+	s.mu.Unlock()
+}
+
+func (s *Server) unbanIP(ip string) {
+	log.Println("unbanning IP:" + ip)
+	s.mu.Lock()
+	tempBanList := make([]string, 0)
+	for _, value := range s.banList {
+		if value == ip {
+			continue
+		}
+		tempBanList = append(tempBanList, value)
+	}
+	s.banList = tempBanList
+	s.mu.Unlock()
+}
+
+func (s *Server) handleBannedConnection(conn net.Conn) {
+	if conn != nil {
+		conn.Write(append([]byte(`{"type":"SERVER_MESSAGE","message":"You have been banned from this Anchor server. If you believe this has been wrongfully done contact whoever is hosting it."}`), 0))
+		conn.Write(append([]byte(`{"type":"DISABLE_ANCHOR"}`), 0))
+		conn.Close()
+	}
 }

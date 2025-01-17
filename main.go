@@ -203,6 +203,58 @@ func processStdin(s *Server) {
 			}
 
 			s.mu.Unlock()
+		case "banClient":
+			targetClientId := getClientID(splitInput[1])
+			if targetClientId == 0 {
+				continue
+			}
+
+			s.mu.Lock()
+			client := s.onlineClients[targetClientId]
+			s.mu.Unlock()
+
+			if client != nil {
+				go func() {
+					client.mu.Lock()
+					conn := client.conn
+					client.mu.Unlock()
+					s.banIP(s.getSHA(conn))
+
+					s.handleBannedConnection(client.conn)
+				}()
+			} else {
+				log.Println("Client", targetClientId, "not found")
+			}
+		case "getClientSHA":
+			targetClientId := getClientID(splitInput[1])
+			if targetClientId == 0 {
+				continue
+			}
+
+			s.mu.Lock()
+			client := s.onlineClients[targetClientId]
+			s.mu.Unlock()
+
+			if client != nil {
+
+				client.mu.Lock()
+				conn := client.conn
+				client.mu.Unlock()
+
+				log.SetFlags(0)
+				log.Println("Clients IP SHA: " + s.getSHA(conn))
+				log.SetFlags(log.LstdFlags)
+			} else {
+				log.Println("Client", targetClientId, "not found")
+			}
+		case "banIP":
+			s.banIP(splitInput[1])
+		case "unbanIP":
+			s.unbanIP(splitInput[1])
+		case "unbanAll":
+			s.mu.Lock()
+			s.banList = nil
+			s.mu.Unlock()
 		case "stop":
 			s.mu.Lock()
 			for _, client := range s.onlineClients {
@@ -215,7 +267,26 @@ func processStdin(s *Server) {
 
 			os.Exit(0)
 		default:
-			log.Printf("Available commands:\nhelp: Show this help message\nstats: Print server stats\nquiet: Toggle quiet mode\nroomCount: Show the number of rooms\nclientCount: Show the number of clients\nlist: List all rooms and clients\nstop <message>: Stop the server\nmessage <clientId> <message>: Send a message to a client\nmessageAll <message>: Send a message to all clients\ndisable <clientId> <message>: Disable anchor on a client\ndisableAll <message>: Disable anchor on all clients\ndeleteRoom <roomID>: Disables anchor on all online clients in the room and deletes it\n")
+			log.SetFlags(0)
+			log.Println("Available commands:")
+			log.Println("help: Show this help message")
+			log.Println("stats: Print server stats")
+			log.Println("quiet: Toggle quiet mode")
+			log.Println("roomCount: Show the number of rooms")
+			log.Println("clientCount: Show the number of clients")
+			log.Println("list: List all rooms and clients")
+			log.Println("stop <message>: Stop the server")
+			log.Println("message <clientId> <message>: Send a message to a client")
+			log.Println("messageAll <message>: Send a message to all clients")
+			log.Println("disable <clientId> <message>: Disable anchor on a client")
+			log.Println("disableAll <message>: Disable anchor on all clients")
+			log.Println("deleteRoom <roomID>: Disables anchor on all online clients in the room and deletes it")
+			log.Println("banIP <ip>:Adds an IP address to the ban list")
+			log.Println("unbanIP <ip>:Removes an IP address from the ban list")
+			log.Println("unbanAll: Unbans all IP addresses that are currently banned")
+			log.Println("banClient <clientId>: Bans the IP of the selected Client and boots them")
+			log.Println("getClientSHA <clientId>: Gets the client's IP SHA value")
+			log.SetFlags(log.LstdFlags)
 		}
 	}
 }
