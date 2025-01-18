@@ -81,15 +81,18 @@ func (s *Server) Start(errChan chan error) {
 
 		ip := s.getSHA(conn)
 
+		s.mu.Lock()
 		//If they are banned stop here
 		if slices.Contains(s.banList, ip) {
-			s.handleBannedConnection(conn)
+			go s.handleBannedConnection(conn)
+			s.mu.Unlock()
 			continue
 		}
 
 		if !slices.Contains(s.clientSHAs, ip) {
 			s.clientSHAs = append(s.clientSHAs, ip)
 		}
+		s.mu.Unlock()
 
 		go s.handleConnection(conn, errChan)
 	}
@@ -113,6 +116,7 @@ func (s *Server) parseStats(errChan chan error) {
 	s.nextClientId.Store(gjson.Get(string(value), "uniqueCount").Uint())
 	s.currentMonth.Store(uint64((time.Month(gjson.Get(string(value), "currentMonth").Uint()))))
 
+	s.mu.Lock()
 	array := gjson.Parse(string(value)).Get("clientSHAs").Array()
 	for _, value := range array {
 		s.clientSHAs = append(s.clientSHAs, value.Str)
@@ -122,6 +126,7 @@ func (s *Server) parseStats(errChan chan error) {
 	for _, value := range array {
 		s.banList = append(s.banList, value.Str)
 	}
+	s.mu.Unlock()
 
 }
 
@@ -142,8 +147,10 @@ func (s *Server) saveStats() {
 	value, _ = sjson.Set(value, "uniqueCount", s.nextClientId.Load())
 	value, _ = sjson.Set(value, "onlineCount", s.onlineCount())
 	value, _ = sjson.Set(value, "lastStatsHeartbeat", time.Now())
+	s.mu.Lock()
 	value, _ = sjson.Set(value, "clientSHAs", s.clientSHAs)
 	value, _ = sjson.Set(value, "banList", s.banList)
+	s.mu.Unlock()
 
 	err := os.WriteFile("./stats.json", []byte(value), 0644)
 
@@ -194,8 +201,12 @@ func (s *Server) statsHeartbeat(errChan chan error) {
 			s.onlineClients.Range(func(_, value interface{}) bool {
 				client := value.(*Client)
 				client.mu.Lock()
-				s.clientSHAs = append(s.clientSHAs, s.getSHA(client.conn))
+				sha := s.getSHA(client.conn)
 				client.mu.Unlock()
+
+				s.mu.Lock()
+				s.clientSHAs = append(s.clientSHAs, sha)
+				s.mu.Unlock()
 
 				return true
 			})
