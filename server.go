@@ -260,6 +260,7 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 		if invalidCount >= BANNABLE_INVALID_PACKET_LIMIT {
 			s.banIP(strings.Split(conn.RemoteAddr().String(), ":")[0])
 			s.handleBannedConnection(conn)
+			continue
 		}
 		packet := scanner.Text()
 
