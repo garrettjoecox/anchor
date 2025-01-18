@@ -20,7 +20,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const JSON_TEMPLATE = `{"totalGamesComplete":0,"monthlyGamesComplete":0,"onlineCount":0,"lastStatsHeartbeat":"","nextClientId":1,"banList":[],"clientSHAs":[]}`
+const JSON_TEMPLATE = `{"currentMonth":0,"totalGamesComplete":0,"monthlyGamesComplete":0,"onlineCount":0,"lastStatsHeartbeat":"","nextClientId":1,"banList":[],"clientSHAs":[]}`
 const INACTIVITY_TIMEOUT = 5 * time.Minute
 const HEARTBEAT = 30 * time.Second
 const BANNABLE_INVALID_PACKET_LIMIT = 5
@@ -30,6 +30,7 @@ type Server struct {
 	quietMode            bool
 	onlineClients        map[uint64]*Client
 	rooms                map[string]*Room
+	currentMonth         time.Month
 	totalGamesComplete   uint64
 	monthlyGamesComplete uint64
 	nextClientId         uint64
@@ -43,6 +44,7 @@ func NewServer() *Server {
 		onlineClients:        make(map[uint64]*Client),
 		quietMode:            false,
 		rooms:                make(map[string]*Room),
+		currentMonth:         time.Now().Month(),
 		totalGamesComplete:   0,
 		monthlyGamesComplete: 0,
 		nextClientId:         1,
@@ -115,6 +117,7 @@ func (s *Server) parseStats(errChan chan error) {
 	s.totalGamesComplete = uint64(gjson.Get(string(value), "totalGamesComplete").Int())
 	s.monthlyGamesComplete = uint64(gjson.Get(string(value), "monthlyGamesComplete").Int())
 	s.nextClientId = uint64(gjson.Get(string(value), "nextClientId").Int())
+	s.currentMonth = time.Month(gjson.Get(string(value), "currentMonth").Int())
 
 	array := gjson.Parse(string(value)).Get("clientSHAs").Array()
 	for _, value := range array {
@@ -133,6 +136,7 @@ func (s *Server) saveStats() {
 	//list of stats to save. Should all be in the JSON_TEMPLATE const
 	value, _ := sjson.Set(JSON_TEMPLATE, "totalGamesComplete", s.totalGamesComplete)
 	value, _ = sjson.Set(value, "monthlyGamesComplete", s.monthlyGamesComplete)
+	value, _ = sjson.Set(value, "currentMonth", s.currentMonth)
 	value, _ = sjson.Set(value, "nextClientId", s.nextClientId)
 	value, _ = sjson.Set(value, "onlineCount", len(s.onlineClients))
 	value, _ = sjson.Set(value, "lastStatsHeartbeat", time.Now())
@@ -171,7 +175,6 @@ func (s *Server) cleanupInactiveRooms(errChan chan error) {
 
 func (s *Server) statsHeartbeat(errChan chan error) {
 	ticker := time.NewTicker(25 * time.Second)
-	currentMonth := time.Now().Month()
 
 	defer ticker.Stop()
 	defer func() {
@@ -181,11 +184,12 @@ func (s *Server) statsHeartbeat(errChan chan error) {
 	}()
 
 	for range ticker.C {
+		s.mu.Lock()
 		//monthly refresh
-		if time.Now().Month() != currentMonth {
-			currentMonth = time.Now().Month()
+		if s.currentMonth != time.Now().Month() {
+			log.Println("Refreshing monthly stats")
+			s.currentMonth = time.Now().Month()
 
-			s.mu.Lock()
 			s.monthlyGamesComplete = 0
 			s.clientSHAs = nil
 			for _, client := range s.onlineClients {
@@ -193,8 +197,9 @@ func (s *Server) statsHeartbeat(errChan chan error) {
 				s.clientSHAs = append(s.clientSHAs, s.getSHA(client.conn))
 				client.mu.Unlock()
 			}
-			s.mu.Unlock()
+
 		}
+		s.mu.Unlock()
 		s.saveStats()
 	}
 }
