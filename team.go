@@ -18,14 +18,12 @@ type Team struct {
 func (t *Team) broadcastPacket(packet string) {
 	clientId := gjson.Get(packet, "clientId").Uint()
 
-	t.room.mu.Lock()
-	defer t.room.mu.Unlock()
-
-	for _, client := range t.room.clients {
-		if client.conn == nil || client.id == clientId || client.team != t {
-			continue
+	t.room.clients.Range(func(_, value interface{}) bool {
+		client := value.(*Client)
+		if client.conn != nil && client.id != clientId && client.team == t {
+			client.sendPacket(packet)
 		}
 
-		client.sendPacket(packet)
-	}
+		return true
+	})
 }
