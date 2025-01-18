@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/signal"
@@ -91,6 +92,11 @@ func processStdin(s *Server) {
 		input, err := reader.ReadString('\n')
 
 		if err != nil {
+			if err == io.EOF {
+				log.Println("Got an EOF from stdin. Closing console gorutine.")
+				return
+			}
+
 			log.Println("Error reading from stdin:", err)
 			continue
 		}
