@@ -4,3 +4,5 @@ services:
     #build: . # local dockerfile
     ports:
       - "43383:43383"
+    volumes:
+      - ./stats.json:/app/stats.json #stats.json file
