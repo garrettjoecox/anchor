@@ -75,18 +75,14 @@ func sendServerMessage(client *Client, message string) {
 	client.sendPacket(`{"type":"SERVER_MESSAGE","message":"` + message + `"}`)
 }
 
-func findOnlineClient(server *Server, targetClientID string) *Client {
-	converted, err := strconv.ParseUint(targetClientID, 10, 64)
+func getClientID(clientID string) uint64 {
+	converted, err := strconv.ParseUint(clientID, 10, 64)
 	if err != nil {
 		log.Println("Given text was not a valid clientID.")
-		return nil
+		return 0
 	}
 
-	server.mu.Lock()
-	client := server.onlineClients[converted]
-	server.mu.Unlock()
-
-	return client
+	return converted
 }
 
 func processStdin(s *Server) {
@@ -107,102 +103,109 @@ func processStdin(s *Server) {
 
 		switch splitInput[0] {
 		case "roomCount":
-			s.mu.Lock()
-			log.Println("Room count:", len(s.rooms))
-			s.mu.Unlock()
+			var roomCount int
+			s.rooms.Range(func(_, _ interface{}) bool {
+				roomCount++
+				return true
+			})
+			log.Println("Room count:", roomCount)
 		case "clientCount":
-			s.mu.Lock()
-			log.Println("Client count:", len(s.onlineClients))
-			s.mu.Unlock()
+			var clientCount int
+			s.onlineClients.Range(func(_, _ interface{}) bool {
+				clientCount++
+				return true
+			})
 		case "quiet":
-			s.mu.Lock()
-			s.quietMode = !s.quietMode
-			log.Println("Quiet mode:", s.quietMode)
-			s.mu.Unlock()
+			s.quietMode.Store(!s.quietMode.Load())
+			log.Println("Quiet mode:", s.quietMode.Load())
 		case "stats":
-			s.mu.Lock()
-			log.Println("Online Count:", strconv.FormatInt(int64(len(s.onlineClients)), 10), "| Total Games Complete: "+strconv.FormatInt(int64(s.totalGamesComplete), 10), "| Monthly Games Complete: "+strconv.FormatInt(int64(s.monthlyGamesComplete), 10))
-			s.mu.Unlock()
+			log.Println("Online Count:", strconv.FormatInt(int64(s.onlineCount()), 10), "| Total Games Complete: "+strconv.FormatInt(int64(s.totalGamesCompleteCount.Load()), 10), "| Monthly Games Complete: "+strconv.FormatInt(int64(s.monthlyGamesCompleteCount.Load()), 10))
+			log.Println("Games Complete: " + strconv.FormatInt(int64(s.totalGamesCompleteCount.Load()), 10))
 		case "list":
-			s.mu.Lock()
-			for _, room := range s.rooms {
-				room.mu.Lock()
+			s.rooms.Range(func(_, value interface{}) bool {
+				room := value.(*Room)
 				log.SetFlags(0)
 				log.Println("Room", room.id+":")
-				for _, client := range room.clients {
+				room.clients.Range(func(_, value interface{}) bool {
+					client := value.(*Client)
 					client.mu.Lock()
 					log.Println("  Client", fmt.Sprint(client.id)+":", client.state)
 					client.mu.Unlock()
-				}
+					return true
+				})
 				log.SetFlags(log.LstdFlags)
-				room.mu.Unlock()
-			}
-			s.mu.Unlock()
+				return true
+			})
 		case "disable":
-			targetClientID := splitInput[1]
-			client := findOnlineClient(s, targetClientID)
+			targetClientID := getClientID(splitInput[1])
+			if targetClientID == 0 {
+				continue
+			}
 
-			if client != nil {
-				client.mu.Unlock()
+			value, ok := s.onlineClients.Load(targetClientID)
+
+			if ok {
+				client := value.(*Client)
 				log.Println("[Server] DISABLE_ANCHOR packet ->", client.id)
-				client.mu.Unlock()
 				go sendDisable(client, getMessage(splitInput[2:]))
 			} else {
 				log.Println("Client", targetClientID, "not found")
 			}
 		case "disableAll":
 			log.Println("[Server] DISABLE_ANCHOR packet -> All")
-			s.mu.Lock()
-			for _, client := range s.onlineClients {
+			s.onlineClients.Range(func(_, value interface{}) bool {
+				client := value.(*Client)
 				go sendDisable(client, getMessage(splitInput[1:]))
-			}
-			s.mu.Unlock()
+				return true
+			})
 		case "message":
-			targetClientID := splitInput[1]
-			client := findOnlineClient(s, targetClientID)
+			targetClientID := getClientID(splitInput[1])
+			if targetClientID == 0 {
+				continue
+			}
 
-			if client != nil {
-				client.mu.Lock()
+			value, ok := s.onlineClients.Load(targetClientID)
+
+			if ok {
+				client := value.(*Client)
 				log.Println("[Server] SERVER_MESSAGE packet ->", client.id)
-				client.mu.Unlock()
 				go sendServerMessage(client, getMessage(splitInput[2:]))
 			} else {
 				log.Println("Client", targetClientID, "not found")
 			}
 		case "messageAll":
 			log.Println("[Server] SERVER_MESSAGE packet -> All")
-			s.mu.Lock()
-			for _, client := range s.onlineClients {
+			s.onlineClients.Range(func(_, value interface{}) bool {
+				client := value.(*Client)
 				go sendServerMessage(client, getMessage(splitInput[1:]))
-			}
-			s.mu.Unlock()
+				return true
+			})
 		case "deleteRoom":
-			s.mu.Lock()
 			targetRoomID := splitInput[1]
 
-			room := s.rooms[targetRoomID]
+			_, ok := s.rooms.Load(targetRoomID)
 
-			if room != nil {
-				room.mu.Lock()
-				for _, client := range s.onlineClients {
-					client.mu.Lock()
+			if ok {
+				s.onlineClients.Range(func(_, value interface{}) bool {
+					client := value.(*Client)
 					if client.room.id == targetRoomID {
 						go sendDisable(client, "Deleting your room. Goodbye!")
 					}
-					client.mu.Unlock()
-				}
-				room.mu.Unlock()
-				delete(s.rooms, targetRoomID)
+					return true
+				})
+				s.rooms.Delete(targetRoomID)
 			} else {
-				log.Println("Client", targetRoomID, "not found")
+				log.Println("Room", targetRoomID, "not found")
 			}
 
 			s.mu.Unlock()
 		case "banClient":
-			targetClientID := splitInput[1]
-			client := findOnlineClient(s, targetClientID)
+			targetClientID := getClientID(splitInput[1])
+			value, ok := s.onlineClients.Load(targetClientID)
 
-			if client != nil {
+			client := value.(*Client)
+
+			if ok {
 				go func() {
 					client.mu.Lock()
 					conn := client.conn
@@ -215,10 +218,12 @@ func processStdin(s *Server) {
 				log.Println("Client", targetClientID, "not found")
 			}
 		case "getClientSHA":
-			targetClientID := splitInput[1]
-			client := findOnlineClient(s, targetClientID)
+			targetClientID := getClientID(splitInput[1])
+			value, ok := s.onlineClients.Load(targetClientID)
 
-			if client != nil {
+			client := value.(*Client)
+
+			if ok {
 
 				client.mu.Lock()
 				conn := client.conn
@@ -239,11 +244,11 @@ func processStdin(s *Server) {
 			s.banList = nil
 			s.mu.Unlock()
 		case "stop":
-			s.mu.Lock()
-			for _, client := range s.onlineClients {
+			s.onlineClients.Range(func(_, value interface{}) bool {
+				client := value.(*Client)
 				go sendServerMessage(client, "Server restarting. Check back in a bit!")
-			}
-			s.mu.Unlock()
+				return true
+			})
 
 			s.saveStats()
 			s.listener.Close()

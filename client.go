@@ -38,25 +38,20 @@ func (c *Client) handlePacket(packet string) {
 
 		team := c.room.findOrCreateTeam(gjson.Get(packet, "state.teamId").String())
 
-		c.mu.Lock()
 		c.team = team
-		c.mu.Unlock()
 	}
 
 	if packetType == "GAME_COMPLETE" {
-		c.server.mu.Lock()
-		c.server.totalGamesComplete++
-		c.server.monthlyGamesComplete++
-		c.server.mu.Unlock()
+		c.server.totalGamesCompleteCount.Add(1)
+		c.server.monthlyGamesCompleteCount.Add(1)
 	}
 
 	targetClientId := gjson.Get(packet, "targetClientId")
 
 	if targetClientId.Exists() {
-		c.room.mu.Lock()
-		targetClient, ok := c.room.clients[targetClientId.Uint()]
-		c.room.mu.Unlock()
+		value, ok := c.room.clients.Load(targetClientId.Uint())
 		if ok {
+			targetClient := value.(*Client)
 			targetClient.sendPacket(packet)
 		}
 		return
@@ -71,15 +66,15 @@ func (c *Client) handlePacket(packet string) {
 
 		team := c.room.findOrCreateTeam(targetTeamId.String())
 		teamMemberOnline := false
-		c.room.mu.Lock()
-		for _, client := range c.room.clients {
+		c.room.clients.Range(func(_, value interface{}) bool {
+			client := value.(*Client)
 			client.mu.Lock()
 			if client.id != c.id && client.conn != nil && client.team == team && gjson.Get(client.state, "isSaveLoaded").Bool() {
 				teamMemberOnline = true
 			}
 			client.mu.Unlock()
-		}
-		c.room.mu.Unlock()
+			return true
+		})
 
 		if teamMemberOnline {
 			team.mu.Lock()
@@ -106,20 +101,20 @@ func (c *Client) handlePacket(packet string) {
 
 		team := c.room.findOrCreateTeam(targetTeamId.String())
 
-		c.room.mu.Lock()
 		team.mu.Lock()
+		clientIdsRequestingState := team.clientIdsRequestingState
 		team.state = gjson.Get(packet, "state").Raw
 		team.queue = []string{}
+		team.clientIdsRequestingState = []uint64{}
+		team.mu.Unlock()
 
-		for _, clientId := range team.clientIdsRequestingState {
-			if client, ok := c.room.clients[clientId]; ok {
+		for _, clientId := range clientIdsRequestingState {
+			if value, ok := c.room.clients.Load(clientId); ok {
+				client := value.(*Client)
 				client.sendPacket(packet)
 			}
 		}
 
-		team.clientIdsRequestingState = []uint64{}
-		team.mu.Unlock()
-		c.room.mu.Unlock()
 	} else if packetType == "UPDATE_ROOM_STATE" {
 		c.room.mu.Lock()
 		c.room.state = gjson.Get(packet, "state").Raw
@@ -168,12 +163,11 @@ func (c *Client) disconnect() {
 
 	c.mu.Lock()
 	c.state, _ = sjson.Set(c.state, "online", false)
+	c.state, _ = sjson.Set(c.state, "isSaveLoaded", false)
 	c.conn = nil
 	c.mu.Unlock()
 
-	c.server.mu.Lock()
-	delete(c.server.onlineClients, c.id)
-	c.server.mu.Unlock()
+	c.server.onlineClients.Delete(c.id)
 }
 
 func (c *Client) sendRoomState() {
