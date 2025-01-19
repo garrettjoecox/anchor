@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -20,6 +21,8 @@ import (
 const JSON_TEMPLATE = `{"gameCompleteCount":0,"onlineCount":0,"lastStatsHeartbeat":"","uniqueCount":0}`
 const INACTIVITY_TIMEOUT = 5 * time.Minute
 const HEARTBEAT = 30 * time.Second
+const STATS_FILE = "stats.json"
+const CONNECTIONS_FILE = "connections.log"
 
 type Server struct {
 	listener          net.Listener
@@ -47,9 +50,14 @@ func (s *Server) Start(errChan chan error) {
 	}
 	s.listener = listener
 
+	if err := os.Truncate(CONNECTIONS_FILE, 0); err != nil {
+		log.Printf("Failed to truncate: %v", err)
+	}
+
+	s.parseStats(errChan)
+
 	go s.cleanupInactiveRooms(errChan)
 	go s.heartbeat(errChan)
-	go s.parseStats(errChan)
 	go s.statsHeartbeat(errChan)
 
 	log.Println("Server running on :43383")
@@ -181,18 +189,23 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 	scanner.Split(splitNullByte)
 
 	var client *Client
+	addr := strings.Split(conn.RemoteAddr().String(), ":")[0]
+
+	connectionLog("Connection from " + addr)
 
 	for scanner.Scan() {
 		packet := scanner.Text()
 
 		if !gjson.Valid(packet) {
 			log.Printf("Invalid JSON packet: %s\n", packet)
+			connectionLog("Invalid JSON packet from " + addr)
 			continue
 		}
 
 		packetTypeWrapped := gjson.Get(packet, "type")
 		if !packetTypeWrapped.Exists() {
 			log.Println("Packet missing type")
+			connectionLog("Packet missing type from " + addr)
 			continue
 		}
 
@@ -210,6 +223,7 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 		if client == nil {
 			if packetType != "HANDSHAKE" {
 				log.Println("Client must handshake first")
+				connectionLog("Didn't Handshake from" + strings.Split(conn.LocalAddr().String(), ":")[0])
 				continue
 			}
 
@@ -300,4 +314,16 @@ func splitNullByte(data []byte, atEOF bool) (advance int, token []byte, err erro
 		return len(data), data, nil
 	}
 	return 0, nil, nil
+}
+
+func connectionLog(message string) {
+	f, err := os.OpenFile(CONNECTIONS_FILE, os.O_RDWR|os.O_CREATE|os.O_APPEND, 0666)
+	if err != nil {
+		log.Fatalf("error opening file: %v", err)
+	}
+	defer f.Close()
+
+	log.SetOutput(f)
+	log.Println(message)
+	log.SetOutput(os.Stdout)
 }

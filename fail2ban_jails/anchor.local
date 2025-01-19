@@ -1,0 +1,26 @@
+[connection]
+enabled = true
+filter = connection
+logpath = /path/to/connections.log
+maxretry = 10
+findtime = 10m
+bantime = 60m
+port = 43383
+
+[invalidJson]
+enabled = true
+filter = invalidJson
+logpath = /path/to/connections.log
+maxretry = 5
+findtime = 5m
+bantime = -1
+port = 43383
+
+[packetMissingType]
+enabled = true
+filter = packetMissingType
+logpath = /path/to/connections.log
+maxretry = 5
+findtime = 5m
+bantime = -1
+port = 43383
