@@ -1,0 +1,35 @@
+[connection]
+enabled = true
+filter = anchor_connection
+logpath = /path/to/connection.log
+maxretry = 10
+findtime = 10m
+bantime = 1m 
+port = 43383
+protocol = tcp
+banaction = iptables[type=oneport]
+chain= FORWARD
+
+[invalidJson]
+enabled = true
+filter = anchor_invalidJson
+logpath = /path/to/connection.log
+maxretry = 5
+findtime = 5m
+bantime = -1
+port = 43383
+protocol = tcp
+banaction = iptables[type=oneport,blocktype=DROP]
+chain= FORWARD
+
+[packetMissingType]
+enabled = true
+filter = anchor_packetMissingType
+logpath = /path/to/connection.log
+maxretry = 5
+findtime = 5m
+bantime = -1
+port = 43383
+protocol = tcp
+banaction = iptables[type=oneport,blocktype=DROP]
+chain= FORWARD

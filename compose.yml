@@ -5,4 +5,4 @@ services:
     ports:
       - "43383:43383"
     volumes:
-      - ./stats.json:/app/stats.json #stats.json file
+      - ./logs:/app/logs #logs dir

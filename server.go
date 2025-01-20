@@ -21,8 +21,8 @@ import (
 const JSON_TEMPLATE = `{"gameCompleteCount":0,"onlineCount":0,"lastStatsHeartbeat":"","uniqueCount":0}`
 const INACTIVITY_TIMEOUT = 5 * time.Minute
 const HEARTBEAT = 30 * time.Second
-const STATS_FILE = "stats.json"
-const CONNECTIONS_FILE = "connections.log"
+const STATS_FILE = "./logs/stats.json"
+const CONNECTIONS_FILE = "./logs/connections.log"
 
 type Server struct {
 	listener          net.Listener
@@ -85,7 +85,7 @@ func (s *Server) parseStats(errChan chan error) {
 		}
 	}()
 
-	value, err := os.ReadFile("stats.json")
+	value, err := os.ReadFile(STATS_FILE)
 	if err != nil {
 		log.Println("Error reading stats.json file:", err)
 	}
@@ -110,7 +110,7 @@ func (s *Server) saveStats() {
 	value, _ = sjson.Set(value, "onlineCount", s.onlineCount())
 	value, _ = sjson.Set(value, "lastStatsHeartbeat", time.Now())
 
-	err := os.WriteFile("./stats.json", []byte(value), 0644)
+	err := os.WriteFile(STATS_FILE, []byte(value), 0644)
 
 	if err != nil {
 		log.Println("Error writing json to file: ", err)
