@@ -17,26 +17,34 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const JSON_TEMPLATE = `{"gameCompleteCount":0,"onlineCount":0,"lastStatsHeartbeat":"","uniqueCount":0}`
+const JSON_TEMPLATE = `{"currentMonth":0,"totalGamesCompleteCount":0,"monthlyGamesCompleteCount":0,"totalUniqueCount":0,"monthlyRoomCount":0,"monthlyNewClientCount":0,"onlineCount":0,"lastStatsHeartbeat":""}`
 const INACTIVITY_TIMEOUT = 5 * time.Minute
 const HEARTBEAT = 30 * time.Second
 
 type Server struct {
-	listener          net.Listener
-	quietMode         atomic.Bool
-	onlineClients     sync.Map
-	rooms             sync.Map
-	gameCompleteCount atomic.Uint64
-	nextClientId      atomic.Uint64
+	listener                  net.Listener
+	quietMode                 atomic.Bool
+	onlineClients             sync.Map
+	rooms                     sync.Map
+	totalGamesCompleteCount   atomic.Uint64
+	monthlyGamesCompleteCount atomic.Uint64
+	nextClientId              atomic.Uint64
+	monthlyRoomCount          atomic.Uint64
+	monthlyNewClientCount     atomic.Uint64
+	currentMonth              atomic.Int32
 }
 
 func NewServer() *Server {
 	return &Server{
-		onlineClients:     sync.Map{},
-		quietMode:         atomic.Bool{},
-		rooms:             sync.Map{},
-		gameCompleteCount: atomic.Uint64{},
-		nextClientId:      atomic.Uint64{},
+		onlineClients:             sync.Map{},
+		quietMode:                 atomic.Bool{},
+		rooms:                     sync.Map{},
+		totalGamesCompleteCount:   atomic.Uint64{},
+		monthlyGamesCompleteCount: atomic.Uint64{},
+		nextClientId:              atomic.Uint64{},
+		monthlyRoomCount:          atomic.Uint64{},
+		monthlyNewClientCount:     atomic.Uint64{},
+		currentMonth:              atomic.Int32{},
 	}
 }
 
@@ -47,9 +55,10 @@ func (s *Server) Start(errChan chan error) {
 	}
 	s.listener = listener
 
+	s.parseStats(errChan)
+
 	go s.cleanupInactiveRooms(errChan)
 	go s.heartbeat(errChan)
-	go s.parseStats(errChan)
 	go s.statsHeartbeat(errChan)
 
 	log.Println("Server running on :43383")
@@ -83,8 +92,12 @@ func (s *Server) parseStats(errChan chan error) {
 	}
 
 	//input values into their repective fields of the server
-	s.gameCompleteCount.Store(gjson.Get(string(value), "gamesComplete").Uint())
-	s.nextClientId.Store(gjson.Get(string(value), "uniqueCount").Uint())
+	s.totalGamesCompleteCount.Store(gjson.Get(string(value), "totalGamesCompleteCount").Uint())
+	s.monthlyGamesCompleteCount.Store(gjson.Get(string(value), "monthlyGamesCompleteCount").Uint())
+	s.nextClientId.Store(gjson.Get(string(value), "totalUniqueCount").Uint())
+	s.monthlyRoomCount.Store(gjson.Get(string(value), "monthlyRoomCount").Uint())
+	s.currentMonth.Store(int32(gjson.Get(string(value), "currentMonth").Int()))
+	s.monthlyNewClientCount.Store(gjson.Get(string(value), "monthlyNewClientCount").Uint())
 }
 
 func (s *Server) onlineCount() int {
@@ -97,10 +110,14 @@ func (s *Server) onlineCount() int {
 }
 
 func (s *Server) saveStats() {
-	value, _ := sjson.Set(JSON_TEMPLATE, "gamesComplete", s.gameCompleteCount.Load())
-	value, _ = sjson.Set(value, "uniqueCount", s.nextClientId.Load())
+	value, _ := sjson.Set(JSON_TEMPLATE, "totalGamesCompleteCount", s.totalGamesCompleteCount.Load())
+	value, _ = sjson.Set(value, "monthlyGamesCompleteCount", s.monthlyGamesCompleteCount.Load())
+	value, _ = sjson.Set(value, "currentMonth", s.currentMonth.Load())
+	value, _ = sjson.Set(value, "totalUniqueCount", s.nextClientId.Load())
+	value, _ = sjson.Set(value, "monthlyRoomCount", s.monthlyRoomCount.Load())
 	value, _ = sjson.Set(value, "onlineCount", s.onlineCount())
 	value, _ = sjson.Set(value, "lastStatsHeartbeat", time.Now())
+	value, _ = sjson.Set(value, "monthlyNewClientCount", s.monthlyNewClientCount.Load())
 
 	err := os.WriteFile("./stats.json", []byte(value), 0644)
 
@@ -141,6 +158,15 @@ func (s *Server) statsHeartbeat(errChan chan error) {
 	}()
 
 	for range ticker.C {
+		//monthly refresh
+		if time.Month(s.currentMonth.Load()) != time.Now().Month() {
+			log.Println("Refreshing monthly stats")
+			s.currentMonth.Store(int32(time.Now().Month()))
+			s.monthlyGamesCompleteCount.Store(0)
+			s.monthlyRoomCount.Store(0)
+			s.monthlyNewClientCount.Store(0)
+		}
+
 		s.saveStats()
 	}
 }
@@ -200,9 +226,12 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 
 		// Health check
 		if packetType == "STATS" {
-			outgoingPacket, _ := sjson.Set(`{"type":"STATS"}`, "uniqueCount", s.nextClientId.Load())
-			outgoingPacket, _ = sjson.Set(outgoingPacket, "gameCompleteCount", s.gameCompleteCount.Load())
+			outgoingPacket, _ := sjson.Set(`{"type":"STATS"}`, "totalUniqueCount", s.nextClientId.Load())
+			outgoingPacket, _ = sjson.Set(outgoingPacket, "monthlyRoomCount", s.monthlyRoomCount.Load())
+			outgoingPacket, _ = sjson.Set(outgoingPacket, "totalGamesCompleteCount", s.totalGamesCompleteCount.Load())
+			outgoingPacket, _ = sjson.Set(outgoingPacket, "monthlyGamesCompleteCount", s.monthlyGamesCompleteCount.Load())
 			outgoingPacket, _ = sjson.Set(outgoingPacket, "onlineCount", s.onlineCount())
+			outgoingPacket, _ = sjson.Set(outgoingPacket, "monthlyNewClientCount", s.monthlyNewClientCount.Load())
 			conn.Write(append([]byte(outgoingPacket), 0))
 			continue
 		}
@@ -246,6 +275,7 @@ func (s *Server) findOrCreateClient(packet string, conn net.Conn) *Client {
 			break
 		}
 		clientId = s.nextClientId.Add(1)
+		s.monthlyNewClientCount.Add(1)
 	}
 
 	room := s.findOrCreateRoom(packet, clientId)
@@ -287,6 +317,7 @@ func (s *Server) findOrCreateRoom(packet string, clientId uint64) *Room {
 	if !ok {
 		room = NewRoom(roomId, clientId, packet)
 		s.rooms.Store(roomId, room)
+		s.monthlyRoomCount.Add(1)
 	}
 
 	return room.(*Room)

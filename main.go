@@ -125,7 +125,7 @@ func processStdin(s *Server) {
 			s.quietMode.Store(!s.quietMode.Load())
 			log.Println("Quiet mode:", s.quietMode.Load())
 		case "stats":
-			log.Println("Games Complete: " + strconv.FormatInt(int64(s.gameCompleteCount.Load()), 10))
+			log.Println("Total Games Complete: " + strconv.FormatInt(int64(s.totalGamesCompleteCount.Load()), 10) + " | Monthly Games Complete: " + strconv.FormatInt(int64(s.monthlyGamesCompleteCount.Load()), 10))
 		case "list":
 			s.rooms.Range(func(_, value interface{}) bool {
 				room := value.(*Room)
