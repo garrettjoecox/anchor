@@ -2,52 +2,55 @@
 
 ## What is this?
 
-Anchor is a mod+server that enables co-op on Ship of Harkinian. It's primary
-functions are loading save state from a remote player when you join their
-session, and sending flag sets/item gives across all players in a session. This
-is not multi-world, and it requires that all players have the same randomizer
-seed loaded, but this is a great example to reference for it and other
-multiplayer ventures.
+Anchor is a client/server service for providing multiplayer functions in Harbor Masters 64 ports. It's primary functions are loading save state from a remote player when you join their session, and sending flag sets/item gives across all players in a room/team. 
+
+This implementation of a client/server model is very generic, allowing for multiple games to use it's functions at once as the client software is responsible for handling all of the game state.
 
 ## How to
 
-You don't technically need this, I'm hosting this on my end. Instead see
-[the associated SoH Build](https://github.com/garrettjoecox/OOT/pull/52)
+You don't technically need this as there is a public server available that is the default in all HM64 ports.
 
+Here is a list of supported client software developed by the HM64 team:
+- [Ship of Harkinian](https://github.com/HarbourMasters/Shipwright/pull/4910)
+- [2 Ship 2 Harkinian]()
+
+### Run the server
 If you would like to host your own server:
 
-- [Install deno](https://docs.deno.com/runtime/manual/getting_started/installation)
-- If you don't want to make any code changes, you can run it straight from
-  github with
+1. [Install Go](https://go.dev/doc/install)
 
-```sh
-deno run --allow-all https://raw.githubusercontent.com/garrettjoecox/anchor/main/mod.ts
+2.  Clone the repo:
+  https://github.com/garrettjoecox/anchor and run it with one of the following:
+
+#### Quickly compile and run
+```
+go run .
 ```
 
-- If you want to make code changes, clone the repo:
-  https://github.com/garrettjoecox/anchor and run it with
-
+#### Compile a binary
+You can compile the program into a binary by running this command
 ```sh
-deno run --allow-all mod.ts
-```
-
-- In the network tab update your remote IP to point to your server, eg:
-
-```diff
--"gRemoteGIIP": "anchor.proxysaw.dev",
-+"gRemoteGIIP": "127.0.0.1",
+go build .
 ```
 
 ### Docker
 
 ```sh
-docker run -p 43385:43385 -v /my/mnt/logs:/logs ghcr.io/garrettjoecox/anchor:latest
+docker run -p 43383:43383 -v /my/mnt/logs:/app/logs ghcr.io/garrettjoecox/anchor:latest
 ```
 
 Optional environment variables can be set:
 
-- `PORT`: configures the server port inside the container; defaults to `43385`
-- `QUIET`: when set, fewer log messages are output; defaults to unset
+- `PORT`: configures the server port inside the container; defaults to `43383`
+- `Volumes`: mounts a local directory to a directory in the container; our example uses the log folder
+
+### Docker Compose
+We also have an example [docker compose file](/compose.yml) 
+```sh
+docker compose up -d
+```
+
+Any configurable environment variables can be viewed [here](#docker).
 
 ## Packet protocol
 
@@ -59,21 +62,21 @@ Packets are delimited by a null terminator `\0`. Clients built prior to December
 these clients you will need to use the `legacy-newline-terminator` branch of
 this repo.
 
-```ts
+```json
 // Packets that the client will receive from server
-interface IncomingPacket {
-  type: string;
-  roomId: string; // roomId which the client belongs to
-  clientId?: number; // clientId whom the packet came from. Server can send packets so not always provided
-  quiet?: boolean; // prevent this packet from logging. Any position/location packets should use this
+{
+  "type": "string",
+  "roomId": "string", // roomId which the client belongs to
+  "clientId": "number", // clientId whom the packet came from. Server can send packets so not always provided
+  "quiet": "boolean", // prevent this packet from logging. Any position/location packets should use this
   ...any valid json
-}
+},
 // Packets the client sends to server
-interface OutgoingPacket {
-  type: string;
-  roomId: string; // roomId which the client belongs to
-  targetClientId?: number; // the server will only send this packet to the targetted client ID
-  quiet?: boolean; // prevent this packet from logging. Any position/location packets should use this
+{
+  "type": "string",
+  "roomId": "string", // roomId which the client belongs to
+  "targetClientId": "number", // the server will only send this packet to the targetted client ID
+  "quiet": "boolean", // prevent this packet from logging. Any position/location packets should use this
   ...any valid json
 }
 ```
@@ -85,6 +88,7 @@ with the following exceptions:
   one client
 - If the packet is `PUSH_SAVE_STATE`, it will only be sent to clients who have
   requested a save state with `REQUEST_SAVE_STATE`
+- If the packet contains a `targetteamId` it will only be forwarded to that team in the room
 
 Upon joining a room a client should register it's `data` with the
 `UPDATE_CLIENT_DATA` packet. The data should be an object with string keys and
