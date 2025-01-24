@@ -93,7 +93,7 @@ func processStdin(s *Server) {
 
 		if err != nil {
 			if err == io.EOF {
-				log.Println("Got an EOF from stdin. Closing console gorutine.")
+				log.Println("Got an EOF from stdin. Closing console goroutine.")
 				return
 			}
 
@@ -216,7 +216,21 @@ func processStdin(s *Server) {
 
 			os.Exit(0)
 		default:
-			log.Printf("Available commands:\nhelp: Show this help message\nstats: Print server stats\nquiet: Toggle quiet mode\nroomCount: Show the number of rooms\nclientCount: Show the number of clients\nlist: List all rooms and clients\nstop <message>: Stop the server\nmessage <clientId> <message>: Send a message to a client\nmessageAll <message>: Send a message to all clients\ndisable <clientId> <message>: Disable anchor on a client\ndisableAll <message>: Disable anchor on all clients\ndeleteRoom <roomID>: Disables anchor on all online clients in the room and deletes it\n")
+			log.SetFlags(0)
+			log.Println("Available commands:")
+			log.Println("help: Show this help message")
+			log.Println("stats: Print server stats")
+			log.Println("quiet: Toggle quiet mode")
+			log.Println("roomCount: Show the number of rooms")
+			log.Println("clientCount: Show the number of clients")
+			log.Println("list: List all rooms and clients")
+			log.Println("stop <message>: Stop the server")
+			log.Println("message <clientId> <message>: Send a message to a client")
+			log.Println("messageAll <message>: Send a message to all clients")
+			log.Println("disable <clientId> <message>: Disable anchor on a client")
+			log.Println("disableAll <message>: Disable anchor on all clients")
+			log.Println("deleteRoom <roomID>: Disables anchor on all online clients in the room and deletes it")
+			log.SetFlags(log.LstdFlags)
 		}
 	}
 }
