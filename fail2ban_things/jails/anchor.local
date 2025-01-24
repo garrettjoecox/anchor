@@ -1,35 +1,66 @@
-[connection]
+#Block both INPUT and FORWARD chain. Should block all incoming traffic from the IP whether for containers or the host machine itself
+[connection_input]
 enabled = true
 filter = anchor_connection
-logpath = /path/to/connection.log
+logpath = /path/to/connections.log
 maxretry = 10
 findtime = 10m
-bantime = 1m 
-port = 43383
-protocol = tcp
-banaction = iptables[type=oneport]
+bantime = 10m 
+protocol = all
+banaction = iptables[type=allports]
+chain= INPUT
+
+[connection_forward]
+enabled = true
+filter = anchor_connection
+logpath = /path/to/connections.log
+maxretry = 10
+findtime = 10m
+bantime = 10m 
+protocol = all
+banaction = iptables[type=allports]
 chain= FORWARD
 
-[invalidJson]
+[invalidJson_input]
 enabled = true
 filter = anchor_invalidJson
-logpath = /path/to/connection.log
+logpath = /path/to/connections.log
 maxretry = 5
 findtime = 5m
 bantime = -1
-port = 43383
-protocol = tcp
-banaction = iptables[type=oneport,blocktype=DROP]
+protocol = all
+banaction = iptables[type=allports,blocktype=DROP]
+chain= INPUT
+
+[invalidJson_forward]
+enabled = true
+filter = anchor_invalidJson
+logpath = /path/to/connections.log
+maxretry = 5
+findtime = 5m
+bantime = -1
+protocol = all
+banaction = iptables[type=allports,blocktype=DROP]
 chain= FORWARD
 
-[packetMissingType]
+[packetMissingType_input]
 enabled = true
 filter = anchor_packetMissingType
-logpath = /path/to/connection.log
+logpath = /path/to/connections.log
 maxretry = 5
 findtime = 5m
 bantime = -1
-port = 43383
-protocol = tcp
-banaction = iptables[type=oneport,blocktype=DROP]
+protocol = all
+banaction = iptables[type=allports,blocktype=DROP]
+chain= INPUT
+
+[packetMissingType_forward]
+enabled = true
+filter = anchor_packetMissingType
+logpath = /path/to/connections.log
+maxretry = 5
+findtime = 5m
+bantime = -1
+protocol = all
+banaction = iptables[type=allports,blocktype=DROP]
 chain= FORWARD
