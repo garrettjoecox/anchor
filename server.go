@@ -9,10 +9,12 @@ import (
 	"net"
 	"os"
 	"runtime"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/joho/godotenv"
 	"github.com/tidwall/gjson"
 	"github.com/tidwall/sjson"
 )
@@ -41,7 +43,32 @@ func NewServer() *Server {
 }
 
 func (s *Server) Start(errChan chan error) {
-	listener, err := net.Listen("tcp", ":43383")
+	err := godotenv.Load()
+	if err != nil {
+		log.Println("Error loading .env file")
+	}
+
+	//load env vars
+	port := "43383"
+
+	if env := os.Getenv("PORT"); env != "" {
+		port = env
+	}
+
+	quiet := false
+
+	if env := os.Getenv("QUIET"); env != "" {
+		envQuiet, err := strconv.ParseBool(env)
+		if err != nil {
+			log.Println("Error parsing quiet bool from env")
+			envQuiet = false
+		}
+		quiet = envQuiet
+	}
+
+	s.quietMode.Store(quiet)
+
+	listener, err := net.Listen("tcp", ":"+port)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -52,7 +79,7 @@ func (s *Server) Start(errChan chan error) {
 	go s.parseStats(errChan)
 	go s.statsHeartbeat(errChan)
 
-	log.Println("Server running on :43383")
+	log.Println("Server running on port " + port)
 
 	for {
 		conn, err := listener.Accept()
