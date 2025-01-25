@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/tidwall/gjson"
+	"github.com/tidwall/pretty"
 	"github.com/tidwall/sjson"
 )
 
@@ -119,7 +120,7 @@ func (s *Server) saveStats() {
 	value, _ = sjson.Set(value, "lastStatsHeartbeat", time.Now())
 	value, _ = sjson.Set(value, "monthlyNewClientCount", s.monthlyNewClientCount.Load())
 
-	err := os.WriteFile("./stats.json", []byte(value), 0644)
+	err := os.WriteFile("./stats.json", pretty.Pretty([]byte(value)), 0644)
 
 	if err != nil {
 		log.Println("Error writing json to file: ", err)
