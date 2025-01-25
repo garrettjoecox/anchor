@@ -42,7 +42,8 @@ func (c *Client) handlePacket(packet string) {
 	}
 
 	if packetType == "GAME_COMPLETE" {
-		c.server.gameCompleteCount.Add(1)
+		c.server.totalGamesCompleteCount.Add(1)
+		c.server.monthlyGamesCompleteCount.Add(1)
 	}
 
 	targetClientId := gjson.Get(packet, "targetClientId")
