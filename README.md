@@ -16,7 +16,7 @@ You don't technically need this, I'm hosting this on my end. Instead see
 
 If you would like to host your own server:
 
-- [Install deno](https://docs.deno.com/runtime/manual/getting_started/installation)
+- [Install deno (a pre-2.0.0 version)](https://docs.deno.com/runtime/manual/getting_started/installation)
 - If you don't want to make any code changes, you can run it straight from
   github with
 
