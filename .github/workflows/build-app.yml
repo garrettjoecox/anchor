@@ -3,7 +3,7 @@ name: Build App
 on:
   push:
     branches:
-      - autobuild3
+      - main
 
 jobs:
   build:
@@ -13,7 +13,7 @@ jobs:
     - name: Checkout
       uses: actions/checkout@v4
       with:
-        ref: autobuild3
+        ref: main
 
     - name: Setup Go
       uses: actions/setup-go@v5
@@ -35,4 +35,4 @@ jobs:
         file: ./bin/anchor-*
         file_glob: true
         tag: ${{ github.ref }}
-        target_commit: autobuild3
+        target_commit: main
