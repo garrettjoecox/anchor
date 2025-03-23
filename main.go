@@ -35,12 +35,8 @@ func main() {
 	}()
 
 	go func() {
-		// Shut down server on first error
 		if err := <-errChan; err != nil {
-			log.Printf("Server shutting down due to error: %v", err)
-			server.saveStats()
-			server.listener.Close()
-			os.Exit(1) // Exit the program
+			log.Printf("Error: %v", err)
 		}
 	}()
 
