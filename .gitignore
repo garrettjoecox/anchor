@@ -2,3 +2,4 @@
 stats.json
 *.log
 .screenrc
+node_modules

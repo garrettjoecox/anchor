@@ -17,7 +17,7 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const JSON_TEMPLATE = `{"gameCompleteCount":0,"onlineCount":0,"lastStatsHeartbeat":"","uniqueCount":0}`
+const JSON_TEMPLATE = `{"gameCompleteCount":0,"onlineCount":0,"lastStatsHeartbeat":"","uniqueCount":0,"pid":0}`
 const INACTIVITY_TIMEOUT = 5 * time.Minute
 const HEARTBEAT = 30 * time.Second
 
@@ -83,8 +83,11 @@ func (s *Server) parseStats(errChan chan error) {
 	}
 
 	//input values into their repective fields of the server
-	s.gameCompleteCount.Store(gjson.Get(string(value), "gamesComplete").Uint())
+	s.gameCompleteCount.Store(gjson.Get(string(value), "gameCompleteCount").Uint())
 	s.nextClientId.Store(gjson.Get(string(value), "uniqueCount").Uint())
+
+	// Save stats immediately to update lastStatsHeartbeat
+	s.saveStats()
 }
 
 func (s *Server) onlineCount() int {
@@ -97,10 +100,11 @@ func (s *Server) onlineCount() int {
 }
 
 func (s *Server) saveStats() {
-	value, _ := sjson.Set(JSON_TEMPLATE, "gamesComplete", s.gameCompleteCount.Load())
+	value, _ := sjson.Set(JSON_TEMPLATE, "gameCompleteCount", s.gameCompleteCount.Load())
 	value, _ = sjson.Set(value, "uniqueCount", s.nextClientId.Load())
 	value, _ = sjson.Set(value, "onlineCount", s.onlineCount())
-	value, _ = sjson.Set(value, "lastStatsHeartbeat", time.Now())
+	value, _ = sjson.Set(value, "lastStatsHeartbeat", time.Now().UnixMilli())
+	value, _ = sjson.Set(value, "pid", os.Getpid())
 
 	err := os.WriteFile("./stats.json", []byte(value), 0644)
 
