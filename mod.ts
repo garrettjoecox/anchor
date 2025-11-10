@@ -2,6 +2,10 @@ import { writeAll } from "https://deno.land/std@0.208.0/streams/write_all.ts";
 import { readLines } from "https://deno.land/std@0.208.0/io/read_lines.ts";
 import { encodeHex } from "https://deno.land/std@0.208.0/encoding/hex.ts";
 
+if (!Deno.version.deno.startsWith("1.")) {
+  throw new Error("Deno version 1.x is required to run this server.");
+}
+
 const decoder = new TextDecoder();
 const encoder = new TextEncoder();
 
@@ -50,7 +54,6 @@ type Packet =
 
 interface ServerStats {
   lastStatsHeartbeat: number;
-  clientSHAs: Record<string, boolean>;
   onlineCount: number;
   gamesCompleted: number;
   pid: number;
@@ -68,7 +71,6 @@ class Server {
   public rooms: Room[] = [];
   public stats: ServerStats = {
     lastStatsHeartbeat: Date.now(),
-    clientSHAs: {},
     onlineCount: 0,
     gamesCompleted: 0,
     pid: Deno.pid,
@@ -196,21 +198,14 @@ class Client {
     this.server = server;
     this.id = connection.rid;
 
-    // SHA256 to get a rough idea of how many unique players there are
-    crypto.subtle.digest(
-      "SHA-256",
-      encoder.encode((this.connection.remoteAddr as Deno.NetAddr).hostname),
-    )
-      .then((hasBuffer) => {
-        this.server.stats.onlineCount++;
-        this.server.stats.clientSHAs[encodeHex(hasBuffer)] = true;
-      })
-      .catch((error) => {
-        this.log(`Error hashing client: ${error.message}`);
-      });
+    this.server.stats.onlineCount++;
 
     this.waitForData();
     this.log("Connected");
+    this.sendPacket({
+      type: "SERVER_MESSAGE",
+      message: `This version of Anchor is being sunset, please update soon.`,
+    })
   }
 
   async waitForData() {
@@ -520,8 +515,7 @@ async function stop(message = "Server restarting") {
           break;
         }
         case "stats": {
-          const { clientSHAs: _, ...stats } = server.stats;
-          console.log(stats);
+          console.log(server.stats);
           break;
         }
         case "list": {
