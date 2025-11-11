@@ -1,0 +1,54 @@
+name: Build Binaries
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Binaries
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        include:
+          # macOS
+          - goos: darwin
+            goarch: arm64
+            platform: macOS-arm64
+          # Linux
+          - goos: linux
+            goarch: amd64
+            platform: linux-x64
+          # Windows
+          - goos: windows
+            goarch: amd64
+            platform: windows-x64
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.21'
+
+      - name: Build binary
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+        run: |
+          OUTPUT_NAME="anchor-${{ matrix.platform }}"
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            OUTPUT_NAME="${OUTPUT_NAME}.exe"
+          fi
+          go build -v -ldflags="-s -w" -o "${OUTPUT_NAME}"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: anchor-${{ matrix.platform }}
+          path: anchor-${{ matrix.platform }}*
