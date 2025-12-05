@@ -144,7 +144,10 @@ func (c *Client) sendPacket(packet string) {
 		log.Printf("Client %d <- Server: %s\n", c.id, gjson.Get(packet, "type").String())
 	}
 
+	// Set write deadline to prevent blocking on dead connections
+	c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
 	_, err := c.conn.Write(append([]byte(packet), 0))
+	c.conn.SetWriteDeadline(time.Time{}) // Clear deadline
 
 	if err != nil {
 		c.disconnect()

@@ -20,8 +20,8 @@ func (t *Team) broadcastPacket(packet string) {
 
 	t.room.clients.Range(func(_, value interface{}) bool {
 		client := value.(*Client)
-		if client.conn != nil && client.id != clientId && client.team == t {
-			client.sendPacket(packet)
+		if client.team == t && client.conn != nil && client.id != clientId {
+			go client.sendPacket(packet)
 		}
 
 		return true

@@ -52,7 +52,7 @@ func (r *Room) broadcastPacket(packet string) {
 	r.clients.Range(func(_, value interface{}) bool {
 		client := value.(*Client)
 		if client.conn != nil && client.id != clientId {
-			client.sendPacket(packet)
+			go client.sendPacket(packet)
 		}
 
 		return true
@@ -81,11 +81,10 @@ func (r *Room) broadcastAllClientState() {
 			return true
 		}
 
-		packet, _ = sjson.Set(packet, "state."+fmt.Sprint(idToIndex[id])+".self", true)
+		clientPacket, _ := sjson.Set(packet, "state."+fmt.Sprint(idToIndex[id])+".self", true)
 
-		client.sendPacket(packet)
+		go client.sendPacket(clientPacket)
 
-		packet, _ = sjson.Delete(packet, "state."+fmt.Sprint(idToIndex[id])+".self")
 		return true
 	})
 }
