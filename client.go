@@ -26,7 +26,7 @@ func (c *Client) handlePacket(packet string) {
 
 	packetType := gjson.Get(packet, "type").String()
 
-	if !gjson.Get(packet, "quiet").Exists() {
+	if !c.server.quietMode.Load() && !gjson.Get(packet, "quiet").Exists() {
 		log.Printf("Client %d -> Server: %s\n", c.id, packetType)
 	}
 
@@ -136,18 +136,23 @@ func (c *Client) handlePacket(packet string) {
 }
 
 func (c *Client) sendPacket(packet string) {
-	if c.conn == nil {
-		return
-	}
-
-	if !gjson.Get(packet, "quiet").Exists() {
+	if !c.server.quietMode.Load() && !gjson.Get(packet, "quiet").Exists() {
 		log.Printf("Client %d <- Server: %s\n", c.id, gjson.Get(packet, "type").String())
 	}
 
+	// Lock to prevent race condition with disconnect
+	c.mu.Lock()
+	conn := c.conn
+	if conn == nil {
+		c.mu.Unlock()
+		return
+	}
+	c.mu.Unlock()
+
 	// Set write deadline to prevent blocking on dead connections
-	c.conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	_, err := c.conn.Write(append([]byte(packet), 0))
-	c.conn.SetWriteDeadline(time.Time{}) // Clear deadline
+	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+	_, err := conn.Write(append([]byte(packet), 0))
+	conn.SetWriteDeadline(time.Time{}) // Clear deadline
 
 	if err != nil {
 		c.disconnect()

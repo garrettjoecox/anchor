@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -52,7 +53,14 @@ func (r *Room) broadcastPacket(packet string) {
 	r.clients.Range(func(_, value interface{}) bool {
 		client := value.(*Client)
 		if client.conn != nil && client.id != clientId {
-			go client.sendPacket(packet)
+			go func(c *Client) {
+				defer func() {
+					if r := recover(); r != nil {
+						log.Printf("Panic in sendPacket for client %d: %v", c.id, r)
+					}
+				}()
+				c.sendPacket(packet)
+			}(client)
 		}
 
 		return true
@@ -83,7 +91,14 @@ func (r *Room) broadcastAllClientState() {
 
 		clientPacket, _ := sjson.Set(packet, "state."+fmt.Sprint(idToIndex[id])+".self", true)
 
-		go client.sendPacket(clientPacket)
+		go func(c *Client, p string) {
+			defer func() {
+				if r := recover(); r != nil {
+					log.Printf("Panic in sendPacket for client %d: %v", c.id, r)
+				}
+			}()
+			c.sendPacket(p)
+		}(client, clientPacket)
 
 		return true
 	})
