@@ -10,9 +10,12 @@ import (
 	"github.com/tidwall/sjson"
 )
 
+const sendQueueSize = 256
+
 type Client struct {
 	id           uint64
 	conn         net.Conn
+	sendCh       chan string // Outgoing packet queue, drained by the connection's writeLoop
 	server       *Server
 	room         *Room
 	team         *Team
@@ -21,8 +24,47 @@ type Client struct {
 	lastActivity time.Time
 }
 
+// attachConnLocked binds a new connection to the client and starts its writer goroutine.
+// The caller must hold c.mu.
+func (c *Client) attachConnLocked(conn net.Conn) {
+	c.conn = conn
+	c.sendCh = make(chan string, sendQueueSize)
+	go c.writeLoop(conn, c.sendCh)
+}
+
+// writeLoop is the sole writer for one connection. Serializing all writes through a single
+// goroutine keeps packets to a client in the order they were enqueued — concurrent writes
+// used to be able to deliver a stale ALL_CLIENT_STATE after a newer one, leaving the
+// client's room list wrong until the next join/leave. It owns closing the connection.
+func (c *Client) writeLoop(conn net.Conn, ch chan string) {
+	defer conn.Close()
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Panic in writeLoop for client %d: %v", c.id, r)
+		}
+	}()
+
+	for packet := range ch {
+		// Set write deadline to prevent blocking on dead connections
+		conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
+		_, err := conn.Write(append([]byte(packet), 0))
+		conn.SetWriteDeadline(time.Time{}) // Clear deadline
+
+		if err != nil {
+			c.disconnectConn(conn)
+			return
+		}
+
+		c.mu.Lock()
+		c.lastActivity = time.Now()
+		c.mu.Unlock()
+	}
+}
+
 func (c *Client) handlePacket(packet string) {
+	c.mu.Lock()
 	c.lastActivity = time.Now()
+	c.mu.Unlock()
 
 	packetType := gjson.Get(packet, "type").String()
 
@@ -31,14 +73,13 @@ func (c *Client) handlePacket(packet string) {
 	}
 
 	if packetType == "UPDATE_CLIENT_STATE" {
+		team := c.room.findOrCreateTeam(gjson.Get(packet, "state.teamId").String())
+
 		c.mu.Lock()
 		c.state = gjson.Get(packet, "state").Raw
 		c.state, _ = sjson.Set(c.state, "clientId", c.id)
-		c.mu.Unlock()
-
-		team := c.room.findOrCreateTeam(gjson.Get(packet, "state.teamId").String())
-
 		c.team = team
+		c.mu.Unlock()
 	}
 
 	if packetType == "GAME_COMPLETE" {
@@ -143,45 +184,59 @@ func (c *Client) sendPacket(packet string) {
 	// Lock to prevent race condition with disconnect
 	c.mu.Lock()
 	conn := c.conn
-	if conn == nil {
-		c.mu.Unlock()
+	ch := c.sendCh
+	c.mu.Unlock()
+	if conn == nil || ch == nil {
 		return
 	}
-	c.mu.Unlock()
 
-	// Set write deadline to prevent blocking on dead connections
-	conn.SetWriteDeadline(time.Now().Add(10 * time.Second))
-	_, err := conn.Write(append([]byte(packet), 0))
-	conn.SetWriteDeadline(time.Time{}) // Clear deadline
-
-	if err != nil {
-		c.disconnect()
-	} else {
-		c.mu.Lock()
-		c.lastActivity = time.Now()
-		c.mu.Unlock()
+	// Enqueue for the connection's writer goroutine; never blocks
+	select {
+	case ch <- packet:
+	default:
+		// Queue full: the client isn't draining its socket, consider the session dead
+		log.Printf("Client %d send queue full, disconnecting\n", c.id)
+		c.disconnectConn(conn)
 	}
 }
 
+// disconnect forcibly closes the client's current connection.
 func (c *Client) disconnect() {
-	if c.conn != nil {
-		c.conn.Close()
+	c.mu.Lock()
+	conn := c.conn
+	c.mu.Unlock()
+
+	c.disconnectConn(conn)
+}
+
+// disconnectConn tears down the session bound to conn: marks the client offline and
+// closes its send channel, which makes the writer goroutine flush any queued packets
+// and then close the socket. It is a no-op if the client has since been taken over by a
+// newer connection (reconnect), so a dying session's cleanup can't close the new
+// connection or mark the reconnected client offline.
+func (c *Client) disconnectConn(conn net.Conn) {
+	if conn == nil {
+		return
 	}
 
 	c.mu.Lock()
+	if c.conn != conn {
+		c.mu.Unlock()
+		return
+	}
 	c.state, _ = sjson.Set(c.state, "online", false)
 	c.state, _ = sjson.Set(c.state, "isSaveLoaded", false)
 	c.conn = nil
+	if c.sendCh != nil {
+		close(c.sendCh)
+		c.sendCh = nil
+	}
 	c.mu.Unlock()
 
 	c.server.onlineClients.Delete(c.id)
 }
 
 func (c *Client) sendRoomState() {
-	if c.conn == nil {
-		return
-	}
-
 	c.room.mu.Lock()
 	packet, _ := sjson.SetRaw(`{"type":"UPDATE_ROOM_STATE"}`, "state", c.room.state)
 	c.room.mu.Unlock()

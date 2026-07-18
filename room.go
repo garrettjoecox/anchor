@@ -2,7 +2,6 @@ package main
 
 import (
 	"fmt"
-	"log"
 	"sync"
 	"time"
 
@@ -30,37 +29,29 @@ func NewRoom(id string, ownerClientId uint64, packet string) *Room {
 }
 
 func (r *Room) findOrCreateTeam(teamId string) *Team {
-	var team *Team
 	value, ok := r.teams.Load(teamId)
-	if ok {
-		team = value.(*Team)
-	} else {
-		team = &Team{
+	if !ok {
+		// LoadOrStore, not Store: concurrent callers must agree on a single team instance
+		value, _ = r.teams.LoadOrStore(teamId, &Team{
 			id:    teamId,
 			state: "{}",
 			room:  r,
 			queue: make([]string, 0),
-		}
-		r.teams.Store(teamId, team)
+		})
 	}
 
-	return team
+	return value.(*Team)
 }
 
 func (r *Room) broadcastPacket(packet string) {
 	clientId := gjson.Get(packet, "clientId").Uint()
 
+	// sendPacket only enqueues onto the recipient's write queue, so this never blocks
+	// on a slow client and packets keep their order
 	r.clients.Range(func(_, value interface{}) bool {
 		client := value.(*Client)
-		if client.conn != nil && client.id != clientId {
-			go func(c *Client) {
-				defer func() {
-					if r := recover(); r != nil {
-						log.Printf("Panic in sendPacket for client %d: %v", c.id, r)
-					}
-				}()
-				c.sendPacket(packet)
-			}(client)
+		if client.id != clientId {
+			client.sendPacket(packet)
 		}
 
 		return true
@@ -68,6 +59,11 @@ func (r *Room) broadcastPacket(packet string) {
 }
 
 func (r *Room) broadcastAllClientState() {
+	// Serialized per room so that two concurrent joins/disconnects can't deliver an
+	// older membership snapshot after a newer one
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
 	packet := `{"type":"ALL_CLIENT_STATE","state":[]}`
 
 	idToIndex := make(map[interface{}]int)
@@ -85,21 +81,8 @@ func (r *Room) broadcastAllClientState() {
 
 	r.clients.Range(func(id, value interface{}) bool {
 		client := value.(*Client)
-		if client.conn == nil {
-			return true
-		}
-
 		clientPacket, _ := sjson.Set(packet, "state."+fmt.Sprint(idToIndex[id])+".self", true)
-
-		go func(c *Client, p string) {
-			defer func() {
-				if r := recover(); r != nil {
-					log.Printf("Panic in sendPacket for client %d: %v", c.id, r)
-				}
-			}()
-			c.sendPacket(p)
-		}(client, clientPacket)
-
+		client.sendPacket(clientPacket)
 		return true
 	})
 }
@@ -109,9 +92,11 @@ func (r *Room) GetLastActivity() time.Time {
 
 	r.clients.Range(func(id, value interface{}) bool {
 		client := value.(*Client)
+		client.mu.Lock()
 		if client.lastActivity.After(lastActivity) {
 			lastActivity = client.lastActivity
 		}
+		client.mu.Unlock()
 		return true
 	})
 

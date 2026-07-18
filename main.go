@@ -12,6 +12,8 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+
+	"github.com/tidwall/sjson"
 )
 
 func main() {
@@ -69,7 +71,9 @@ func sendServerMessage(client *Client, message string) {
 	if message == "" {
 		message = "You have been disconnected by the server. Try to connect again in a bit!"
 	}
-	client.sendPacket(`{"type":"SERVER_MESSAGE","message":"` + message + `"}`)
+	// sjson escapes the message, so quotes/backslashes can't produce invalid JSON
+	packet, _ := sjson.Set(`{"type":"SERVER_MESSAGE"}`, "message", message)
+	client.sendPacket(packet)
 }
 
 func getClientID(clientID string) uint64 {
@@ -117,6 +121,7 @@ func processStdin(s *Server) {
 				clientCount++
 				return true
 			})
+			log.Println("Client count:", clientCount)
 		case "quiet":
 			s.quietMode.Store(!s.quietMode.Load())
 			log.Println("Quiet mode:", s.quietMode.Load())
