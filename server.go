@@ -18,10 +18,9 @@ import (
 )
 
 const JSON_TEMPLATE = `{"gameCompleteCount":0,"onlineCount":0,"lastStatsHeartbeat":"","uniqueCount":0,"pid":0}`
-const INACTIVITY_TIMEOUT = 5 * time.Minute
-const HEARTBEAT = 30 * time.Second
 
 type Server struct {
+	configuration     *Configuration
 	listener          net.Listener
 	quietMode         atomic.Bool
 	onlineClients     sync.Map
@@ -30,8 +29,9 @@ type Server struct {
 	nextClientId      atomic.Uint64
 }
 
-func NewServer() *Server {
+func NewServer(configuration *Configuration) *Server {
 	return &Server{
+		configuration:     configuration,
 		onlineClients:     sync.Map{},
 		quietMode:         atomic.Bool{},
 		rooms:             sync.Map{},
@@ -40,22 +40,26 @@ func NewServer() *Server {
 	}
 }
 
-func (s *Server) Start(errChan chan error) {
-	listener, err := net.Listen("tcp", ":43383")
+func (s *Server) openListener() {
+	listener, err := net.ListenTCP("tcp", s.configuration.NewTCPAddress())
 	if err != nil {
 		log.Fatal(err)
 	}
 	s.listener = listener
+}
+
+func (s *Server) Start(errChan chan error) {
+	s.openListener()
 
 	go s.cleanupInactiveRooms(errChan)
 	go s.heartbeat(errChan)
 	go s.parseStats(errChan)
 	go s.statsHeartbeat(errChan)
 
-	log.Println("Server running on :43383")
+	log.Printf("Server listening on %v", s.listener.Addr())
 
 	for {
-		conn, err := listener.Accept()
+		conn, err := s.listener.Accept()
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				log.Println("Error with listener:", err)
@@ -114,7 +118,7 @@ func (s *Server) saveStats() {
 }
 
 func (s *Server) cleanupInactiveRooms(errChan chan error) {
-	ticker := time.NewTicker(HEARTBEAT)
+	ticker := time.NewTicker(s.configuration.HeartbeatInterval)
 	defer ticker.Stop()
 	defer func() {
 		if r := recover(); r != nil {
@@ -126,7 +130,7 @@ func (s *Server) cleanupInactiveRooms(errChan chan error) {
 		s.rooms.Range(func(id, value interface{}) bool {
 			room := value.(*Room)
 			lastActivity := room.GetLastActivity()
-			if time.Since(lastActivity) > INACTIVITY_TIMEOUT {
+			if time.Since(lastActivity) > s.configuration.InactivityInterval {
 				log.Println("Room", id, "has been inactive for too long, deleting it")
 				s.rooms.Delete(id)
 			}
@@ -136,7 +140,7 @@ func (s *Server) cleanupInactiveRooms(errChan chan error) {
 }
 
 func (s *Server) statsHeartbeat(errChan chan error) {
-	ticker := time.NewTicker(HEARTBEAT)
+	ticker := time.NewTicker(s.configuration.HeartbeatInterval)
 	defer ticker.Stop()
 	defer func() {
 		if r := recover(); r != nil {
@@ -150,7 +154,7 @@ func (s *Server) statsHeartbeat(errChan chan error) {
 }
 
 func (s *Server) heartbeat(errChan chan error) {
-	ticker := time.NewTicker(HEARTBEAT)
+	ticker := time.NewTicker(s.configuration.HeartbeatInterval)
 	defer ticker.Stop()
 	defer func() {
 		if r := recover(); r != nil {
@@ -165,7 +169,7 @@ func (s *Server) heartbeat(errChan chan error) {
 
 		s.onlineClients.Range(func(_, value interface{}) bool {
 			client := value.(*Client)
-			if time.Since(client.lastActivity) > HEARTBEAT {
+			if time.Since(client.lastActivity) > s.configuration.HeartbeatInterval {
 				go client.sendPacket(`{"type":"HEARTBEAT","quiet":true}`)
 			}
 			return true
