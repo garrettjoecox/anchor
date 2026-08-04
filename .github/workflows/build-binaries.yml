@@ -6,6 +6,9 @@ on:
       - main
   workflow_dispatch:
 
+permissions:
+  contents: read
+
 jobs:
   build:
     name: Build Binaries
@@ -41,14 +44,50 @@ jobs:
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
         run: |
-          OUTPUT_NAME="anchor-${{ matrix.platform }}"
+          NAME="anchor"
           if [ "${{ matrix.goos }}" = "windows" ]; then
-            OUTPUT_NAME="${OUTPUT_NAME}.exe"
+            NAME="anchor.exe"
           fi
-          go build -v -ldflags="-s -w" -o "${OUTPUT_NAME}"
+          mkdir -p dist
+          go build -v -ldflags="-s -w" -o "dist/${NAME}"
+
+      - name: Package binary
+        run: |
+          if [ "${{ matrix.goos }}" = "windows" ]; then
+            cp dist/anchor.exe "anchor-${{ matrix.platform }}.exe"
+          else
+            tar -czf "anchor-${{ matrix.platform }}.tar.gz" -C dist anchor
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: anchor-${{ matrix.platform }}
-          path: anchor-${{ matrix.platform }}*
+          path: anchor-${{ matrix.platform }}.*
+
+  release:
+    name: Publish nightly release
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: Publish rolling nightly
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release delete nightly --cleanup-tag --yes || true
+          gh release create nightly \
+            --prerelease \
+            --target "$GITHUB_SHA" \
+            --title "Nightly" \
+            --notes "Automated build from ${GITHUB_SHA:0:7} ($(date -u +%Y-%m-%d)). Unsigned pre-release." \
+            dist/*

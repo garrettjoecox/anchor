@@ -13,9 +13,13 @@ This implementation of a client/server model is very generic, allowing for multi
 
 ### Precompiled Binaries
 
-- [MacOS (arm64/x86_64)](https://nightly.link/garrettjoecox/anchor/workflows/build-binaries/main/anchor-macOS-arm64.zip)
-- [Linux (x86_64)](https://nightly.link/garrettjoecox/anchor/workflows/build-binaries/main/anchor-linux-x64.zip)
-- [Windows (x86_64)](https://nightly.link/garrettjoecox/anchor/workflows/build-binaries/main/anchor-windows-x64.zip)
+Latest build from `main`, published as assets on the rolling [`nightly`](https://github.com/garrettjoecox/anchor/releases/tag/nightly) pre-release:
+
+- [macOS (arm64)](https://github.com/garrettjoecox/anchor/releases/download/nightly/anchor-macOS-arm64.tar.gz)
+- [Linux (x86_64)](https://github.com/garrettjoecox/anchor/releases/download/nightly/anchor-linux-x64.tar.gz)
+- [Windows (x86_64)](https://github.com/garrettjoecox/anchor/releases/download/nightly/anchor-windows-x64.exe)
+
+The macOS and Linux downloads are tarballs — `tar -xzf anchor-*.tar.gz` leaves you a ready-to-run `anchor`. Because the builds are unsigned, macOS quarantines the binary on first run; clear it with `xattr -dr com.apple.quarantine anchor`.
 
 ### Build from source
 
