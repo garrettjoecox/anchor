@@ -15,7 +15,15 @@ import (
 )
 
 func main() {
-	server := NewServer()
+	PrintRuntime()
+	config, err := NewConfiguration()
+
+	if err != nil {
+		log.Fatalf("Failed configuration discovery: %e", err)
+	}
+
+	config.Print()
+	server := NewServer(config)
 
 	errChan := make(chan error)
 	sigsCa := make(chan os.Signal, 1)
@@ -43,6 +51,10 @@ func main() {
 	go processStdin(server)
 
 	server.Start(errChan)
+}
+
+func PrintRuntime() {
+	log.Printf("Anchor server running on %s/%s, built using %v", runtime.GOOS, runtime.GOARCH, runtime.Version())
 }
 
 func getMessage(input []string) string {
