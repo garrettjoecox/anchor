@@ -20,6 +20,8 @@ import (
 const JSON_TEMPLATE = `{"gameCompleteCount":0,"onlineCount":0,"lastStatsHeartbeat":"","uniqueCount":0,"pid":0}`
 const INACTIVITY_TIMEOUT = 5 * time.Minute
 const HEARTBEAT = 30 * time.Second
+const MAX_PACKET_SIZE = 8 * 1024 * 1024
+const INITIAL_SCAN_BUFFER = 64 * 1024
 
 type Server struct {
 	listener          net.Listener
@@ -31,13 +33,17 @@ type Server struct {
 }
 
 func NewServer() *Server {
-	return &Server{
+	s := &Server{
 		onlineClients:     sync.Map{},
 		quietMode:         atomic.Bool{},
 		rooms:             sync.Map{},
 		gameCompleteCount: atomic.Uint64{},
 		nextClientId:      atomic.Uint64{},
 	}
+
+	s.quietMode.Store(true)
+
+	return s
 }
 
 func (s *Server) Start(errChan chan error) {
@@ -53,6 +59,7 @@ func (s *Server) Start(errChan chan error) {
 	go s.statsHeartbeat(errChan)
 
 	log.Println("Server running on :43383")
+	log.Println("Quiet mode:", s.quietMode.Load())
 
 	for {
 		conn, err := listener.Accept()
@@ -159,9 +166,7 @@ func (s *Server) heartbeat(errChan chan error) {
 	}()
 
 	for range ticker.C {
-		if !s.quietMode.Load() {
-			log.Println("Clients Online & Threads Running", s.onlineCount(), runtime.NumGoroutine())
-		}
+		log.Println("Clients Online & Threads Running", s.onlineCount(), runtime.NumGoroutine())
 
 		s.onlineClients.Range(func(_, value interface{}) bool {
 			client := value.(*Client)
@@ -185,6 +190,7 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 	}()
 
 	scanner := bufio.NewScanner(conn)
+	scanner.Buffer(make([]byte, 0, INITIAL_SCAN_BUFFER), MAX_PACKET_SIZE)
 	scanner.Split(splitNullByte)
 
 	var client *Client
@@ -234,7 +240,11 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 		client.room.broadcastAllClientState()
 
 		if err := scanner.Err(); err != nil {
-			log.Printf("Client %v disconnected with error: %v", client.id, err)
+			if errors.Is(err, bufio.ErrTooLong) {
+				log.Printf("Client %v sent a packet over the %d byte limit, disconnecting", client.id, MAX_PACKET_SIZE)
+			} else {
+				log.Printf("Client %v disconnected with error: %v", client.id, err)
+			}
 		} else {
 			log.Printf("Client %v disconnected\n", client.id)
 		}

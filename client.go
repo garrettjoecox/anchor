@@ -124,8 +124,17 @@ func (c *Client) handlePacket(packet string) {
 		if team.state != "{}" {
 			outgoingPacket, _ = sjson.SetRaw(outgoingPacket, "state", team.state)
 		}
-		outgoingPacket, _ = sjson.Set(outgoingPacket, "queue", team.queue)
+		withQueue, _ := sjson.Set(outgoingPacket, "queue", team.queue)
+		queued := len(team.queue)
 		team.mu.Unlock()
+
+		if len(withQueue) <= MAX_PACKET_SIZE {
+			outgoingPacket = withQueue
+		} else {
+			log.Printf("Team %s state plus %d queued packets is %d bytes, over the %d byte limit; sending state only",
+				team.id, queued, len(withQueue), MAX_PACKET_SIZE)
+			outgoingPacket, _ = sjson.Set(outgoingPacket, "queue", []string{})
+		}
 
 		c.sendPacket(outgoingPacket)
 	} else if packetType == "UPDATE_TEAM_STATE" {
@@ -139,6 +148,7 @@ func (c *Client) handlePacket(packet string) {
 		clientIdsRequestingState := team.clientIdsRequestingState
 		team.state = gjson.Get(packet, "state").Raw
 		team.queue = []string{}
+		team.droppedFromQueue = 0
 		team.clientIdsRequestingState = []uint64{}
 		team.mu.Unlock()
 
@@ -159,9 +169,7 @@ func (c *Client) handlePacket(packet string) {
 		addToQueue := gjson.Get(packet, "addToQueue")
 
 		if addToQueue.Exists() && addToQueue.Bool() {
-			team.mu.Lock()
-			team.queue = append(team.queue, packet)
-			team.mu.Unlock()
+			team.enqueue(packet)
 		}
 
 		team.broadcastPacket(packet)
@@ -179,15 +187,17 @@ func (c *Client) sendPacket(packet string) {
 	c.mu.Lock()
 	conn := c.conn
 	ch := c.sendCh
-	c.mu.Unlock()
-	if conn == nil || ch == nil {
-		return
+	full := false
+	if conn != nil && ch != nil {
+		select {
+		case ch <- packet:
+		default:
+			full = true
+		}
 	}
+	c.mu.Unlock()
 
-	// Enqueue for the connection's writer goroutine; never blocks
-	select {
-	case ch <- packet:
-	default:
+	if full {
 		// Queue full, the client isn't draining its socket, consider the session dead
 		log.Printf("Client %d send queue full, disconnecting\n", c.id)
 		c.disconnectConn(conn)
