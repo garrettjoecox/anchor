@@ -165,8 +165,11 @@ func (s *Server) heartbeat(errChan chan error) {
 
 		s.onlineClients.Range(func(_, value interface{}) bool {
 			client := value.(*Client)
-			if time.Since(client.lastActivity) > HEARTBEAT {
-				go client.sendPacket(`{"type":"HEARTBEAT","quiet":true}`)
+			client.mu.Lock()
+			idle := time.Since(client.lastActivity) > HEARTBEAT
+			client.mu.Unlock()
+			if idle {
+				client.sendPacket(`{"type":"HEARTBEAT","quiet":true}`)
 			}
 			return true
 		})
@@ -227,7 +230,7 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 	}
 
 	if client != nil {
-		client.disconnect()
+		client.disconnectConn(conn)
 		client.room.broadcastAllClientState()
 
 		if err := scanner.Err(); err != nil {
@@ -243,9 +246,24 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 
 func (s *Server) findOrCreateClient(packet string, conn net.Conn) *Client {
 	clientId := gjson.Get(packet, "clientId").Uint()
+	roomId := gjson.Get(packet, "roomId").String()
+
+	takeover := false
+	if clientId != 0 {
+		if value, ok := s.onlineClients.Load(clientId); ok {
+			existing := value.(*Client)
+			if existing.room.id == roomId {
+				takeover = true
+				log.Printf("Client %v reconnected, closing stale session\n", clientId)
+				existing.disconnect()
+			} else {
+				clientId = 0
+			}
+		}
+	}
 
 	// Check if the client id is already in use or is 0 and look for a new one
-	for {
+	for !takeover {
 		if _, ok := s.onlineClients.Load(clientId); !ok && clientId != 0 {
 			break
 		}
@@ -261,7 +279,7 @@ func (s *Server) findOrCreateClient(packet string, conn net.Conn) *Client {
 	if ok {
 		client = loadedClient.(*Client)
 		client.mu.Lock()
-		client.conn = conn
+		client.attachConnLocked(conn)
 		client.state = clientState
 		client.team = team
 		client.lastActivity = time.Now()
@@ -269,13 +287,15 @@ func (s *Server) findOrCreateClient(packet string, conn net.Conn) *Client {
 	} else {
 		client = &Client{
 			id:           clientId,
-			conn:         conn,
 			server:       s,
 			room:         room,
 			team:         team,
 			state:        clientState,
 			lastActivity: time.Now(),
 		}
+		client.mu.Lock()
+		client.attachConnLocked(conn)
+		client.mu.Unlock()
 		room.clients.Store(clientId, client)
 	}
 
@@ -289,8 +309,7 @@ func (s *Server) findOrCreateRoom(packet string, clientId uint64) *Room {
 
 	room, ok := s.rooms.Load(roomId)
 	if !ok {
-		room = NewRoom(roomId, clientId, packet)
-		s.rooms.Store(roomId, room)
+		room, _ = s.rooms.LoadOrStore(roomId, NewRoom(roomId, clientId, packet))
 	}
 
 	return room.(*Room)

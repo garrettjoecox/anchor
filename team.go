@@ -1,7 +1,6 @@
 package main
 
 import (
-	"log"
 	"sync"
 
 	"github.com/tidwall/gjson"
@@ -21,15 +20,11 @@ func (t *Team) broadcastPacket(packet string) {
 
 	t.room.clients.Range(func(_, value interface{}) bool {
 		client := value.(*Client)
-		if client.team == t && client.conn != nil && client.id != clientId {
-			go func(c *Client) {
-				defer func() {
-					if r := recover(); r != nil {
-						log.Printf("Panic in sendPacket for client %d: %v", c.id, r)
-					}
-				}()
-				c.sendPacket(packet)
-			}(client)
+		client.mu.Lock()
+		onTeam := client.team == t
+		client.mu.Unlock()
+		if onTeam && client.id != clientId {
+			client.sendPacket(packet)
 		}
 
 		return true
