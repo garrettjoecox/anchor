@@ -76,10 +76,6 @@ func (c *Client) handlePacket(packet string) {
 		c.mu.Unlock()
 	}
 
-	if packetType == "GAME_COMPLETE" {
-		c.server.gameCompleteCount.Add(1)
-	}
-
 	targetClientId := gjson.Get(packet, "targetClientId")
 
 	if targetClientId.Exists() {

@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"log"
 	"net"
-	"os"
 	"runtime"
 	"sync"
 	"sync/atomic"
@@ -17,28 +16,25 @@ import (
 	"github.com/tidwall/sjson"
 )
 
-const JSON_TEMPLATE = `{"gameCompleteCount":0,"onlineCount":0,"lastStatsHeartbeat":"","uniqueCount":0,"pid":0}`
 const INACTIVITY_TIMEOUT = 5 * time.Minute
 const HEARTBEAT = 30 * time.Second
 const MAX_PACKET_SIZE = 8 * 1024 * 1024
 const INITIAL_SCAN_BUFFER = 64 * 1024
 
 type Server struct {
-	listener          net.Listener
-	quietMode         atomic.Bool
-	onlineClients     sync.Map
-	rooms             sync.Map
-	gameCompleteCount atomic.Uint64
-	nextClientId      atomic.Uint64
+	listener      net.Listener
+	quietMode     atomic.Bool
+	onlineClients sync.Map
+	rooms         sync.Map
+	nextClientId  atomic.Uint64
 }
 
 func NewServer() *Server {
 	s := &Server{
-		onlineClients:     sync.Map{},
-		quietMode:         atomic.Bool{},
-		rooms:             sync.Map{},
-		gameCompleteCount: atomic.Uint64{},
-		nextClientId:      atomic.Uint64{},
+		onlineClients: sync.Map{},
+		quietMode:     atomic.Bool{},
+		rooms:         sync.Map{},
+		nextClientId:  atomic.Uint64{},
 	}
 
 	s.quietMode.Store(true)
@@ -55,8 +51,6 @@ func (s *Server) Start(errChan chan error) {
 
 	go s.cleanupInactiveRooms(errChan)
 	go s.heartbeat(errChan)
-	go s.parseStats(errChan)
-	go s.statsHeartbeat(errChan)
 
 	log.Println("Server running on :43383")
 	log.Println("Quiet mode:", s.quietMode.Load())
@@ -69,32 +63,12 @@ func (s *Server) Start(errChan chan error) {
 				break
 			}
 			log.Println("Error accepting connection:", err)
-			conn.Close()
+			time.Sleep(time.Second)
 			continue
 		}
 
 		go s.handleConnection(conn, errChan)
 	}
-}
-
-func (s *Server) parseStats(errChan chan error) {
-	defer func() {
-		if r := recover(); r != nil {
-			errChan <- fmt.Errorf("panic in parseStats: %v", r)
-		}
-	}()
-
-	value, err := os.ReadFile("stats.json")
-	if err != nil {
-		log.Println("Error reading stats.json file:", err)
-	}
-
-	//input values into their repective fields of the server
-	s.gameCompleteCount.Store(gjson.Get(string(value), "gameCompleteCount").Uint())
-	s.nextClientId.Store(gjson.Get(string(value), "uniqueCount").Uint())
-
-	// Save stats immediately to update lastStatsHeartbeat
-	s.saveStats()
 }
 
 func (s *Server) onlineCount() int {
@@ -104,20 +78,6 @@ func (s *Server) onlineCount() int {
 		return true
 	})
 	return count
-}
-
-func (s *Server) saveStats() {
-	value, _ := sjson.Set(JSON_TEMPLATE, "gameCompleteCount", s.gameCompleteCount.Load())
-	value, _ = sjson.Set(value, "uniqueCount", s.nextClientId.Load())
-	value, _ = sjson.Set(value, "onlineCount", s.onlineCount())
-	value, _ = sjson.Set(value, "lastStatsHeartbeat", time.Now().UnixMilli())
-	value, _ = sjson.Set(value, "pid", os.Getpid())
-
-	err := os.WriteFile("./stats.json", []byte(value), 0644)
-
-	if err != nil {
-		log.Println("Error writing json to file: ", err)
-	}
 }
 
 func (s *Server) cleanupInactiveRooms(errChan chan error) {
@@ -139,20 +99,6 @@ func (s *Server) cleanupInactiveRooms(errChan chan error) {
 			}
 			return true
 		})
-	}
-}
-
-func (s *Server) statsHeartbeat(errChan chan error) {
-	ticker := time.NewTicker(HEARTBEAT)
-	defer ticker.Stop()
-	defer func() {
-		if r := recover(); r != nil {
-			errChan <- fmt.Errorf("panic in statsHeartbeat: %v", r)
-		}
-	}()
-
-	for range ticker.C {
-		s.saveStats()
 	}
 }
 
@@ -211,15 +157,6 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 
 		packetType := packetTypeWrapped.String()
 
-		// Health check
-		if packetType == "STATS" {
-			outgoingPacket, _ := sjson.Set(`{"type":"STATS"}`, "uniqueCount", s.nextClientId.Load())
-			outgoingPacket, _ = sjson.Set(outgoingPacket, "gameCompleteCount", s.gameCompleteCount.Load())
-			outgoingPacket, _ = sjson.Set(outgoingPacket, "onlineCount", s.onlineCount())
-			conn.Write(append([]byte(outgoingPacket), 0))
-			continue
-		}
-
 		if client == nil {
 			if packetType != "HANDSHAKE" {
 				log.Println("Client must handshake first")
@@ -248,7 +185,7 @@ func (s *Server) handleConnection(conn net.Conn, errChan chan error) {
 		} else {
 			log.Printf("Client %v disconnected\n", client.id)
 		}
-	} else {
+	} else if !s.quietMode.Load() {
 		log.Println("Unknown client disconnected.")
 	}
 

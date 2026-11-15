@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 
 	"github.com/tidwall/sjson"
 )
@@ -31,7 +32,6 @@ func main() {
 		stacklen := runtime.Stack(buf, true)
 		log.Printf("=== Goroutine Dump ===\n%s\n=== End ===", buf[:stacklen])
 
-		server.saveStats()
 		server.listener.Close()
 		os.Exit(0)
 	}()
@@ -124,8 +124,6 @@ func processStdin(s *Server) {
 		case "quiet":
 			s.quietMode.Store(!s.quietMode.Load())
 			log.Println("Quiet mode:", s.quietMode.Load())
-		case "stats":
-			log.Println("Games Complete: " + strconv.FormatInt(int64(s.gameCompleteCount.Load()), 10))
 		case "list":
 			s.rooms.Range(func(_, value interface{}) bool {
 				room := value.(*Room)
@@ -211,12 +209,13 @@ func processStdin(s *Server) {
 				return true
 			})
 
-			s.saveStats()
+			// Give the restart message a moment to reach clients before exiting
+			time.Sleep(time.Second)
 			s.listener.Close()
 
 			os.Exit(0)
 		default:
-			log.Printf("Available commands:\nhelp: Show this help message\nstats: Print server stats\nquiet: Toggle quiet mode\nroomCount: Show the number of rooms\nclientCount: Show the number of clients\nlist: List all rooms and clients\nstop <message>: Stop the server\nmessage <clientId> <message>: Send a message to a client\nmessageAll <message>: Send a message to all clients\ndisable <clientId> <message>: Disable anchor on a client\ndisableAll <message>: Disable anchor on all clients\ndeleteRoom <roomID>: Disables anchor on all online clients in the room and deletes it\n")
+			log.Printf("Available commands:\nhelp: Show this help message\nquiet: Toggle quiet mode\nroomCount: Show the number of rooms\nclientCount: Show the number of clients\nlist: List all rooms and clients\nstop <message>: Stop the server\nmessage <clientId> <message>: Send a message to a client\nmessageAll <message>: Send a message to all clients\ndisable <clientId> <message>: Disable anchor on a client\ndisableAll <message>: Disable anchor on all clients\ndeleteRoom <roomID>: Disables anchor on all online clients in the room and deletes it\n")
 		}
 	}
 }

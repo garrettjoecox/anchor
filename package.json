@@ -1,9 +1,6 @@
 {
   "name": "anchor",
   "private": true,
-  "dependencies": {
-    "discord.js": "^14.24.2"
-  },
   "devDependencies": {
     "@types/bun": "latest"
   },
